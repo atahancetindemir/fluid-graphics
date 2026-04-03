@@ -3,9 +3,29 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#define SCENARIO_LID_DRIVEN
+
+#ifdef SCENARIO_LID_DRIVEN
+    #define INIT_SCENARIO()       init_lid_driven(u, v, smoke, p)
+    #define APPLY_BOUNDARIES()    apply_boundaries_lid_driven(u, v)
+    #define APPLY_SOURCES()       apply_sources_lid_driven(smoke)
+#elif defined(SCENARIO_KARMAN)
+    #define INIT_SCENARIO()       init_karman_vortex(u, v, smoke)
+    #define APPLY_BOUNDARIES()    apply_boundaries_karman_vortex(u, v)
+    #define APPLY_SOURCES()       apply_sources_karman_vortex(u)
+#elif defined(SCENARIO_AIRFOIL)
+    #define INIT_SCENARIO()       init_airfoil(u)
+    #define APPLY_BOUNDARIES()    apply_boundaries_airfoild(u)
+    #define APPLY_SOURCES()       apply_sources_airfoil(smoke, u)
+#elif defined(SCENARIO_WIND_OVER_CITY)
+    #define INIT_SCENARIO()       init_wind_over_city(u, v, smoke)
+    #define APPLY_BOUNDARIES()    apply_boundaries_wind_over_city(u, v)
+    #define APPLY_SOURCES()       apply_sources_wind_over_city(smoke, u)
+#endif
+
 // Layout
-#define X 129
-#define Y 129
+#define X 128
+#define Y 128
 
 // Parameters
 #define DT 0.016f
@@ -13,6 +33,7 @@
 #define DENSITY 1.0f
 #define ITER 20
 #define SEED 54
+#define VISCOSITY 0.01f
 
 // Grid Cell Type
 unsigned char solid[X][Y];
@@ -68,7 +89,7 @@ Y
 +--------------------------+--------------------------+--------------------------+
 */
 
-// ############### Utils ###############
+// ################################### Utils ###################################
 
 // Initializes rng with a seed
 void rng_init_seed(unsigned int seed) {
@@ -170,11 +191,46 @@ void save_matrix(int row, int column, float mat[row][column], const char* filena
     fclose(f);
 }
 
-// ############### Utils ###############
+// ################################### Utils ###################################
 
-void boundaries_lid_driven(float u[X + 1][Y], float v[X][Y + 1]) {
-    float lid_velocity = 1.0f;
+// ################################# Scenarios #################################
 
+void init_lid_driven(float u[X + 1][Y], float v[X][Y + 1], float smoke[X][Y], float p[X][Y]) {
+    rng_init_seed(SEED);
+
+    mat_zero(X + 1, Y, u);
+    mat_zero(X, Y + 1, v);
+    mat_zero(X, Y, p);
+    mat_zero(X, Y, smoke);
+
+    mat_zero_char(X, Y, solid); // Set all grids to fluid.
+
+    // Solid boundaries.
+    for (int i = 0; i < X; i++) {
+        solid[i][0] = 1;     // Top
+        solid[i][Y - 1] = 1; // Bottom
+    }
+    for (int j = 0; j < Y; j++) {
+        solid[0][j] = 1;     // Left
+        solid[X - 1][j] = 1; // Right
+    }
+
+    for (int i = 0; i < X; i++) {
+        for (int j = 0; j < Y; j++) {
+            if (solid[i][j]) {
+                smoke[i][j] = 0.0f;
+            }
+        }
+    }
+}
+
+void apply_sources_lid_driven(float smoke[X][Y]) {
+    for (int i = 3; i < X - 3; i++) {
+        smoke[i][Y - 3] = 1.0f;
+    }
+}
+
+void apply_boundaries_lid_driven(float u[X + 1][Y], float v[X][Y + 1]) {
     for (int i = 0; i < X; i++) {
         for (int j = 0; j < Y; j++) {
             if (solid[i][j]) {
@@ -182,12 +238,114 @@ void boundaries_lid_driven(float u[X + 1][Y], float v[X][Y + 1]) {
                 u[i + 1][j] = 0.0f;
                 v[i][j] = 0.0f;
                 v[i][j + 1] = 0.0f;
+
+                // Top
+                if (j == Y - 1) {
+                    u[i][j] = 1.0f;
+                    u[i + 1][j] = 1.0f;
+                }
             }
         }
     }
-    // Temporary no-slip hack
-    for (int i = 2; i < X - 1; i++) {
-        u[i][Y - 2] = lid_velocity;
+}
+
+void init_karman_vortex(void) {
+
+}
+
+void apply_sources_karman_vortex(void) {
+
+}
+
+void apply_boundaries_karman_vortex(void) {
+
+}
+
+void init_airfoil(void) {
+
+}
+
+void apply_sources_airfoil(void) {
+
+}
+
+void apply_boundaries_airfoild(void) {
+
+}
+
+void init_wind_over_city(void) {
+
+}
+
+void apply_sources_wind_over_city(void) {
+
+}
+
+void apply_boundaries_wind_over_city(void) {
+
+}
+
+// ################################# Scenarios #################################
+
+// Diffuses the velocity field using Gauss-Seidel iteration.
+void diffuse_velocity(float u[X + 1][Y], float v[X][Y + 1], float visc, float dt, float dx, int iter_count) {
+
+    // Friction coefficient
+    float a = dt * visc / (dx * dx);
+
+    // Temporary arrays to hold the previous iteration's velocity values.
+    static float u_tmp[X + 1][Y];
+    static float v_tmp[X][Y + 1];
+
+    // Copy current velocities to temporary arrays
+    for (int i = 0; i < X + 1; i++) {
+        for (int j = 0; j < Y; j++) {
+            u_tmp[i][j] = u[i][j];
+        }
+    }
+    for (int i = 0; i < X; i++) {
+        for (int j = 0; j < Y + 1; j++) {
+            v_tmp[i][j] = v[i][j];
+        }
+    }
+
+    // Gauss-Seidel iteration for diffusion
+    for (int iter = 0; iter < iter_count; iter++) {
+        
+        // u (horizontal) velocity diffusion
+        for (int i = 1; i < X; i++) {
+            for (int j = 1; j < Y - 1; j++) {
+                // Skip solid boundaries
+                if (solid[i - 1][j] || solid[i][j]) {
+                    continue;
+                }
+                
+                // Fetch neighboring velocities (with no-slip condition at solids)
+                float u_left = u[i - 1][j];
+                float u_right = u[i + 1][j];
+                float u_bottom = u[i][j - 1];
+                float u_top = u[i][j + 1];
+
+                // Update u using the diffusion formula derived from the discretized diffusion equation.
+                u[i][j] = (u_tmp[i][j] + a * (u_left + u_right + u_bottom + u_top)) / (1.0f + 4.0f * a);
+            }
+        }
+
+        // v (vertical) velocity diffusion
+        for (int i = 1; i < X - 1; i++) {
+            for (int j = 1; j < Y; j++) {
+                if (solid[i][j - 1] || solid[i][j]) {
+                    continue;
+                }
+                
+                float v_bottom = v[i][j - 1];
+                float v_top = v[i][j + 1];
+                float v_left = v[i - 1][j];
+                float v_right = v[i + 1][j];
+
+                v[i][j] = (v_tmp[i][j] + a * (v_bottom + v_top + v_left + v_right)) / (1.0f + 4.0f * a);
+            }
+        }
     }
 }
 
@@ -209,7 +367,7 @@ void compute_divergence(float u[X + 1][Y], float v[X][Y + 1], float div[X][Y], f
     }
 }
 
-// Solves the pressure Poisson equation using Jacobi iteration.
+// Solves the pressure Poisson equation using Gauss-Seidel iteration.
 void solve_pressure(float p[X][Y], float div[X][Y], float dx, float dt, float density, int iter_count) {
     float cp = (density * dx * dx) / dt;
 
@@ -410,14 +568,7 @@ void advect_velocity(float u[X + 1][Y], float v[X][Y + 1], float dt, float dx) {
 }
 
 /*
-Further Improvements:
-* Engine:
-    - Add diffuse_velocity
-* Scenarios:
-    - Lid-driven cavity flow
-    - Water tank + external force
-    - Karman vortex street
-    - City Planning (?)
+TODO:
 * Structure:
     - Get rid of VLA approach
     - Add Heap based matrix system
@@ -425,90 +576,33 @@ Further Improvements:
     - Algorithmic speedup
     - Row-major & cache-friendly operations
     - Vector operations
-    - CPU-Based Parallelism
+    - Parallelism
 */
 
-int main() {
+int main(void) {
     float u[X + 1][Y];
     float v[X][Y + 1];
     float p[X][Y];
     float div[X][Y];
     float smoke[X][Y];
 
-    int cx = X / 2;
-    int cy = Y / 2;
+    INIT_SCENARIO();
 
-    rng_init_seed(SEED);
-
-    mat_zero(X + 1, Y, u);
-    mat_zero(X, Y + 1, v);
-    mat_zero(X, Y, p);
-    mat_zero(X, Y, smoke);
-
-    mat_zero_char(X, Y, solid); // Set all grids to fluid.
-
-    // Determine solid boundaries.
-    for (int i = 0; i < X; i++) {
-        solid[i][0] = 1;     // Top
-        solid[i][Y - 1] = 1; // Bottom
-    }
-    for (int j = 0; j < Y; j++) {
-        solid[0][j] = 1;     // Left
-        solid[X - 1][j] = 1; // Right
-    }
-
-    mat_value(X, Y, 1.0f, smoke);
-
-    for (int i = 0; i < X; i++) {
-        for (int j = 0; j < Y; j++) {
-            if (solid[i][j]) {
-                smoke[i][j] = 0.0f;
-            }
-        }
-    }
-
-    // for(int i = X/4; i < 3*X/4; i++) {
-    //     smoke[i][Y-3] = 1.0f;
-    //     smoke[i][Y-4] = 1.0f;
-    // }
-
-    // // Simple wind tunnel
-    // for(int i=1; i<X; i++) {
-    //     for(int j=1; j<Y-1; j++) {
-    //         if (!solid[i][j] && !solid[i-1][j]) {
-    //             u[i][j] = 1.0f;
-    //         }
-    //     }
-    // }
-
-    int steps_per_frame = 30;
+    int steps_per_frame = 20;
     int num_frames = 800;
     for (int frame = 0; frame < num_frames; frame++) {
-
         for (int step = 0; step < steps_per_frame; step++) {
-            boundaries_lid_driven(u, v);
 
-            // for(int i=1; i<X-1; i++) {
-            //     for(int j=1; j<Y-1; j++) {
-            //         if (smoke[i][j] > 0.5f) {
-            //             u[i][j] += 0.01f;
-            //         }
-            //     }
-            // }
+            APPLY_SOURCES();
 
-            // for(int i=1; i<X-1; i++) {
-            //     for(int j=1; j<Y-1; j++) {
-            //         if (smoke[i][j] > 0.1f) {
-            //             v[i][j] -= 0.01f;
-            //         }
-            //     }
-            // }
+            APPLY_BOUNDARIES();
 
             // Advection
             advect_velocity(u, v, DT, DX);
+            diffuse_velocity(u, v, VISCOSITY, DT, DX, ITER);
             advect_smoke(smoke, u, v, DT, DX);
 
-            boundaries_lid_driven(u, v);
+            APPLY_BOUNDARIES();
 
             // Divergence
             compute_divergence(u, v, div, p, DX);
@@ -519,11 +613,11 @@ int main() {
             // Projection
             subtract_gradient(u, v, p, DX, DT, DENSITY);
 
-            boundaries_lid_driven(u, v);
+            APPLY_BOUNDARIES();
         }
         // Write To File.
 
-        char filename[32];
+        char filename[16];
 
         sprintf(filename, "frames/u_%04d.txt", frame);
         save_matrix(X + 1, Y, u, filename);
