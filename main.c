@@ -6,7 +6,7 @@
 #include <time.h>
 #include <sys/stat.h>
 
-#define SCENARIO_LID_DRIVEN
+#define SCENARIO_KARMAN
 
 #ifdef SCENARIO_LID_DRIVEN
     #define INIT_SCENARIO()       init_lid_driven(ctx)
@@ -242,14 +242,6 @@ void mat_save(float* mat, const char* filename, int rows, int cols, int stride) 
 // ################################# Scenarios #################################
 
 void init_lid_driven(FluidContext* ctx) {
-
-    mat_zero_float(ctx->u, ctx->x + 1, ctx->y);
-    mat_zero_float(ctx->v, ctx->x, ctx->y + 1);
-    mat_zero_float(ctx->p, ctx->x, ctx->y);
-    mat_zero_float(ctx->smoke, ctx->x, ctx->y);
-
-    mat_zero_uint(ctx->solid, ctx->x, ctx->y); // Set all grids to fluid.
-
     // Solid boundaries.
     for (int i = 0; i < ctx->x; i++) {
         ctx->solid[IX(ctx, i, 0)] = 1;          // Top
@@ -294,15 +286,64 @@ void apply_boundaries_lid_driven(FluidContext* ctx) {
     }
 }
 
-void init_karman_vortex(void) {
+void init_karman_vortex(FluidContext* ctx) {
+    for (size_t i = 0; i < ctx->x; i++) {
+        ctx->solid[IX(ctx, i, 0)] = 1;          // Bottom
+        ctx->solid[IX(ctx, i, ctx->y - 1)] = 1; // Top
+    }
 
+    // Obstacle
+    size_t cx = ctx->x / 16;
+    size_t cy = ctx->y / 2;
+    size_t r = 5;
+    for (size_t i = 0; i < ctx->x; i++) {
+        for (size_t j = 0; j < ctx->y; j++) {
+            if ((i - cx) * (i - cx) + (j - cy) * (j - cy) <= r * r) {
+                ctx->solid[IX(ctx, i, j)] = 1;
+            }
+        }
+    }
+
+    // Start wind
+    for (size_t i = 0; i < ctx->x; i++) {
+        for (size_t j = 0; j < ctx->y; j++) {
+            if (!(ctx->solid[IX(ctx, i, j)]) && !(ctx->solid[IX(ctx, i - 1, j)])) {
+                ctx->u[IX_U(ctx, i, j)] = 1.0f;
+            }
+        }
+    }
 }
 
-void apply_sources_karman_vortex(void) {
-
+void apply_sources_karman_vortex(FluidContext* ctx) {
+    for (size_t j = 1; j < ctx->y - 1; j++) {
+        if (j > (ctx->y / 2 - 2) && j < (ctx->y / 2 + 2)) {
+            ctx->smoke[IX(ctx, 2, j)] = 1.0f;
+        }
+    }
 }
 
-void apply_boundaries_karman_vortex(void) {
+void apply_boundaries_karman_vortex(FluidContext* ctx) {
+    // Zero out velocities at solid boundaries (No-Slip condition)
+    for (size_t i = 0; i < ctx->x; i++) {
+        for (size_t j = 0; j < ctx->y; j++) {
+            if (ctx->solid[IX(ctx, i, j)]) {
+                ctx->u[IX_U(ctx, i, j)] = 0.0f;
+                ctx->u[IX_U(ctx, i + 1, j)] = 0.0f;
+                ctx->v[IX_V(ctx, i, j)] = 0.0f;
+                ctx->v[IX_V(ctx, i, j + 1)] = 0.0f;
+            }
+        }
+    }
+
+    // Inlet (Left Wall)
+    for (size_t j = 1; j < ctx->y - 1; j++) {
+        ctx->u[IX_U(ctx, 1, j)] = 1.0f;
+    }    
+
+    // Outlet
+    for (size_t j = 1; j < ctx->y - 1; j++) {
+        ctx->u[IX_U(ctx, ctx->x, j)] = ctx->u[IX_U(ctx, ctx->x - 1, j)]; 
+    }
 
 }
 
@@ -343,7 +384,6 @@ void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const flo
 
     // Gauss-Seidel iteration for diffusion
     for (size_t iter = 0; iter < ctx->iter_count; iter++) {
-        
         // u (horizontal) velocity diffusion
         for (size_t i = 1; i < ctx->x; i++) {
             for (size_t j = 1; j < ctx->y - 1; j++) {
@@ -381,69 +421,38 @@ void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const flo
     }
 }
 
-// Computes the divergence of the velocity field.
-void compute_divergence(FluidContext* ctx, float* u, float* v) {
-    float inv_dx = 1.0f / ctx->dx;
+// Diffuses the scalar field with Gauss-Seidel iteration.
+void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
 
-    for (size_t i = 1; i < ctx->x - 1; i++) {
-        for (size_t j = 1; j < ctx->y - 1; j++) {
-            if (ctx->solid[IX(ctx, i ,j)]) {
-                ctx->div[IX(ctx, i, j)] = 0.0f;
-                continue;
-            }
-            // Divergence = Right - Left + Top - Bottom
-            float divergence = (u[IX_U(ctx, i + 1, j)] - u[IX_U(ctx, i, j)] + v[IX_V(ctx, i, j + 1)] - v[IX_V(ctx, i, j)]) * inv_dx;
-            ctx->div[IX(ctx, i, j)] = divergence;
-            ctx->p[IX(ctx, i, j)] = 0.0f;
-        }
-    }
-}
+    mat_cpy(dest, (float*)src, ctx->x, ctx->y);
 
-// Solves the pressure Poisson equation using Gauss-Seidel iteration.
-void solve_pressure(FluidContext* ctx, float* p, float* div) {
-    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
+    // Friction coefficient
+    float a = ctx->dt * ctx->visc / (ctx->dx * ctx->dx);
 
+    // Gauss-Seidel iteration for diffusion
     for (size_t iter = 0; iter < ctx->iter_count; iter++) {
         for (size_t i = 1; i < ctx->x - 1; i++) {
             for (size_t j = 1; j < ctx->y - 1; j++) {
-                // P = (Left + Right + Bottom + Top - Divergence * cp) / 4
-                float p_left = ctx->solid[IX(ctx, i - 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i - 1, j)];
-                float p_right = ctx->solid[IX(ctx, i + 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i + 1, j)];
-                float p_bottom = ctx->solid[IX(ctx, i, j - 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j - 1)];
-                float p_top = ctx->solid[IX(ctx, i, j + 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j + 1)];
-                p[IX(ctx, i, j)] = (p_left + p_right + p_bottom + p_top - div[IX(ctx, i, j)] * cp) * 0.25f;
+                // Skip solid boundaries
+                if (ctx->solid[IX(ctx, i, j)]) {
+                    continue;
+                }
+                
+                // Fetch neighboring velocities (with no-slip condition at solids)
+                float left = dest[IX(ctx, i - 1, j)];
+                float right = dest[IX(ctx, i + 1, j)];
+                float bottom = dest[IX(ctx, i, j - 1)];
+                float top = dest[IX(ctx, i, j + 1)];
+
+                // Update u using the diffusion formula derived from the discretized diffusion equation.
+                dest[IX(ctx, i, j)] = (src[IX(ctx, i, j)] + a * (left + right + bottom + top)) / (1.0f + 4.0f * a);
             }
         }
     }
 }
 
-// Subtracts the pressure gradient from the velocity field to enforce incompressibility.
-void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
-    float scale = ctx->dt / (ctx->dens * ctx->dx);
-
-    // Horizontal velocity correction
-    // i=1 (Left) to i=X-1 (Right)
-    for (size_t i = 1; i < ctx->x; i++) {
-        for (size_t j = 1; j < ctx->y - 1; j++) {
-            if (ctx->solid[IX(ctx, i - 1, j)] || ctx->solid[IX(ctx, i, j)])
-                continue;
-            u[IX_U(ctx, i, j)] -= scale * (p[IX(ctx, i, j)] - p[IX(ctx, i - 1, j)]);
-        }
-    }
-
-    // Vertical velocity correction
-    // j=1 (Bottom) to j=Y-1 (Top)
-    for (size_t i = 1; i < ctx->x - 1; i++) {
-        for (size_t j = 1; j < ctx->y; j++) {
-            if (ctx->solid[IX(ctx, i, j - 1)] || ctx->solid[IX(ctx, i, j)])
-                continue;
-            v[IX_V(ctx, i, j)] -= scale * (p[IX(ctx, i, j)] - p[IX(ctx, i, j - 1)]);
-        }
-    }
-}
-
-// Advects the smoke density field using semi-Lagrangian advection.
-void advect_smoke(FluidContext* ctx, float* u, float* v, float* smoke_dest, const float* smoke_src) {
+// Advect the scalar field with given velocities using semi-Lagrangian advection.
+void advect_scalar(FluidContext* ctx, float* dest, const float* src, float* u, float* v) {
 
     for (size_t i = 1; i < ctx->x - 1; i++) {
         for (size_t j = 1; j < ctx->y - 1; j++) {
@@ -481,12 +490,12 @@ void advect_smoke(FluidContext* ctx, float* u, float* v, float* smoke_dest, cons
             float sy0 = 1.0f - sy1;
 
             // Weighted average of 4 cells
-            smoke_dest[IX(ctx, i, j)] = sx0 * (sy0 * smoke_src[IX(ctx, i0, j0)] + sy1 * smoke_src[IX(ctx, i0, j1)]) + sx1 * (sy0 * smoke_src[IX(ctx, i1, j0)] + sy1 * smoke_src[IX(ctx, i1, j1)]);
+            dest[IX(ctx, i, j)] = sx0 * (sy0 * src[IX(ctx, i0, j0)] + sy1 * src[IX(ctx, i0, j1)]) + sx1 * (sy0 * src[IX(ctx, i1, j0)] + sy1 * src[IX(ctx, i1, j1)]);
         }
     }
 }
 
-// Advects the velocity field using semi-Lagrangian advection.
+// Advects the velocity field with self-advection using semi-Lagrangian advection.
 void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src) {
 
     // u (horizontal) velocity update
@@ -574,6 +583,67 @@ void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const floa
     }
 }
 
+// Computes the divergence of the velocity field.
+void compute_divergence(FluidContext* ctx, float* u, float* v) {
+    float inv_dx = 1.0f / ctx->dx;
+
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
+            if (ctx->solid[IX(ctx, i ,j)]) {
+                ctx->div[IX(ctx, i, j)] = 0.0f;
+                continue;
+            }
+            // Divergence = Right - Left + Top - Bottom
+            float divergence = (u[IX_U(ctx, i + 1, j)] - u[IX_U(ctx, i, j)] + v[IX_V(ctx, i, j + 1)] - v[IX_V(ctx, i, j)]) * inv_dx;
+            ctx->div[IX(ctx, i, j)] = divergence;
+            ctx->p[IX(ctx, i, j)] = 0.0f;
+        }
+    }
+}
+
+// Solves the pressure Poisson equation using Gauss-Seidel iteration.
+void solve_pressure(FluidContext* ctx, float* p, float* div) {
+    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
+
+    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            for (size_t j = 1; j < ctx->y - 1; j++) {
+                // P = (Left + Right + Bottom + Top - Divergence * cp) / 4
+                float p_left = ctx->solid[IX(ctx, i - 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i - 1, j)];
+                float p_right = ctx->solid[IX(ctx, i + 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i + 1, j)];
+                float p_bottom = ctx->solid[IX(ctx, i, j - 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j - 1)];
+                float p_top = ctx->solid[IX(ctx, i, j + 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j + 1)];
+                p[IX(ctx, i, j)] = (p_left + p_right + p_bottom + p_top - div[IX(ctx, i, j)] * cp) * 0.25f;
+            }
+        }
+    }
+}
+
+// Subtracts the pressure gradient from the velocity field to enforce incompressibility.
+void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
+    float scale = ctx->dt / (ctx->dens * ctx->dx);
+
+    // Horizontal velocity correction
+    // i=1 (Left) to i=X-1 (Right)
+    for (size_t i = 1; i < ctx->x; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
+            if (ctx->solid[IX(ctx, i - 1, j)] || ctx->solid[IX(ctx, i, j)])
+                continue;
+            u[IX_U(ctx, i, j)] -= scale * (p[IX(ctx, i, j)] - p[IX(ctx, i - 1, j)]);
+        }
+    }
+
+    // Vertical velocity correction
+    // j=1 (Bottom) to j=Y-1 (Top)
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y; j++) {
+            if (ctx->solid[IX(ctx, i, j - 1)] || ctx->solid[IX(ctx, i, j)])
+                continue;
+            v[IX_V(ctx, i, j)] -= scale * (p[IX(ctx, i, j)] - p[IX(ctx, i, j - 1)]);
+        }
+    }
+}
+
 // Start the simulation by creating a context with given parameters.
 FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float visc, int iters) {
     FluidContext* ctx = (FluidContext*)malloc(sizeof(FluidContext));
@@ -655,22 +725,28 @@ void fluid_step(FluidContext* ctx) {
     APPLY_BOUNDARIES();
 
     // Scalar Advection
-    advect_smoke(ctx, ctx->u, ctx->v, ctx->smoke_prev, ctx->smoke);
+    advect_scalar(ctx, ctx->smoke_prev, ctx->smoke, ctx->u, ctx->v);
     
     SWAP_PTR(ctx->smoke, ctx->smoke_prev);
     
     APPLY_BOUNDARIES();
 }
 
+// TODO:
+// header file system & detailed function explanations
+// red-black gauss-seidel & overrelaxation & parallelism & simd implemenation
+// real-time rendering
+// different scenarios (airfoil, wind over city)
+
 int main(void) {
-    FluidContext* ctx = fluid_create_context(128, 128, 0.016f, 0.01f, 20);
+    FluidContext* ctx = fluid_create_context(256, 128, 0.016f, 0.001f, 20);
 
     clock_t start_time = clock();
 
     INIT_SCENARIO();
 
     int steps_per_frame = 20;
-    int num_frames = 800;
+    int num_frames = 500;
 
     for (int frame = 0; frame < num_frames; frame++) {
         for (int step = 0; step < steps_per_frame; step++) {

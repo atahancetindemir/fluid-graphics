@@ -45,7 +45,7 @@ x_coords = np.arange(1, smoke.shape[1], step)
 X_grid_avg, Y_grid_avg = np.meshgrid(x_coords, y_coords)
 
 quiv = ax.quiver(X_grid_avg, Y_grid_avg, u_avg, v_avg, color='white', scale=5, alpha=0.8, pivot='mid', width=0.003)
-quiv.set_visible(True)
+quiv.set_visible(False)
 ax.set_title("2D Fluid Simulation - Frame: 0")
 ax.set_xlabel("X Axis")
 ax.set_ylabel("Y Axis")
