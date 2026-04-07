@@ -1,42 +1,87 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
 #include <time.h>
+#include <sys/stat.h>
 
 #define SCENARIO_LID_DRIVEN
 
 #ifdef SCENARIO_LID_DRIVEN
-    #define INIT_SCENARIO()       init_lid_driven(u, v, smoke, p)
-    #define APPLY_BOUNDARIES()    apply_boundaries_lid_driven(u, v)
-    #define APPLY_SOURCES()       apply_sources_lid_driven(smoke)
+    #define INIT_SCENARIO()       init_lid_driven(ctx)
+    #define APPLY_BOUNDARIES()    apply_boundaries_lid_driven(ctx)
+    #define APPLY_SOURCES()       apply_sources_lid_driven(ctx)
 #elif defined(SCENARIO_KARMAN)
-    #define INIT_SCENARIO()       init_karman_vortex(u, v, smoke)
-    #define APPLY_BOUNDARIES()    apply_boundaries_karman_vortex(u, v)
-    #define APPLY_SOURCES()       apply_sources_karman_vortex(u)
+    #define INIT_SCENARIO()       init_karman_vortex(ctx)
+    #define APPLY_BOUNDARIES()    apply_boundaries_karman_vortex(ctx)
+    #define APPLY_SOURCES()       apply_sources_karman_vortex(ctx)
 #elif defined(SCENARIO_AIRFOIL)
-    #define INIT_SCENARIO()       init_airfoil(u)
-    #define APPLY_BOUNDARIES()    apply_boundaries_airfoild(u)
-    #define APPLY_SOURCES()       apply_sources_airfoil(smoke, u)
+    #define INIT_SCENARIO()       init_airfoil(ctx)
+    #define APPLY_BOUNDARIES()    apply_boundaries_airfoil(ctx)
+    #define APPLY_SOURCES()       apply_sources_airfoil(ctx)
 #elif defined(SCENARIO_WIND_OVER_CITY)
-    #define INIT_SCENARIO()       init_wind_over_city(u, v, smoke)
-    #define APPLY_BOUNDARIES()    apply_boundaries_wind_over_city(u, v)
-    #define APPLY_SOURCES()       apply_sources_wind_over_city(smoke, u)
+    #define INIT_SCENARIO()       init_wind_over_city(ctx)
+    #define APPLY_BOUNDARIES()    apply_boundaries_wind_over_city(ctx)
+    #define APPLY_SOURCES()       apply_sources_wind_over_city(ctx)
 #endif
 
-// Layout
-#define X 128
-#define Y 128
+// Fluid Simulation Context
+typedef struct {
 
-// Parameters
-#define DT 0.016f
-#define DX 0.1f
-#define DENSITY 1.0f
-#define ITER 20
+    // Domain Dimensions
+    size_t x;           // Grid width
+    size_t y;           // Grid height
+    size_t num_cells;   // Total grid count
+
+    // Physics Properties
+    float dt;           // Time step
+    float dx;           // Grid size
+    float dens;         // Density of the fluid
+    float visc;         // Viscosity of the fluid
+    int iter_count;     // Iteration count for solver
+
+    // Vector Fields
+    float* u;           // Horizontal velocity
+    float* v;           // Vertical velocity
+    
+    // Solver Fields
+    float* p;           // Pressure
+    float* div;         // Divergence
+    
+    // Transport Fields
+    float* smoke;       // Smoke
+    
+    // Geometry
+    uint8_t* solid;     // Boundary Mask
+
+    // Previous State
+    float* u_prev;      // Previous horizontal velocity
+    float* v_prev;      // Previous vertical velocity
+    float* smoke_prev;  // Previous smoke
+
+} FluidContext;
+
+#define IX(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
+#define IX_U(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
+#define IX_V(ctx, i, j) ((size_t)(i) * ((ctx)->y + 1) + (size_t)(j))
+
+#define SWAP_PTR(x0, x) do { float* tmp = x0; x0 = x; x = tmp; } while(0)
+
+// // Layout
+// #define X 128
+// #define Y 128
+
+// // Parameters
+// #define DT 0.016f
+// #define DX 0.1f
+// #define DENSITY 1.0f
+// #define ITER 20
 #define SEED 54
-#define VISCOSITY 0.01f
+// #define VISCOSITY 0.01f
 
-// Grid Cell Type
-unsigned char solid[X][Y];
+// // Grid Cell Type
+// unsigned char solid[X][Y];
 
 /*
 MAC GRID (STAGGERED GRID) MEMORY & SPATIAL LAYOUT
@@ -92,38 +137,38 @@ Y
 // ################################### Utils ###################################
 
 // Initializes rng with a seed
-void rng_init_seed(unsigned int seed) {
+void rng_init_seed(uint32_t seed) {
     srand(seed);
 }
 
 // Initializes rng with current time
 void rng_init_time(void) {
-    srand((unsigned int)time(NULL));
+    srand((uint32_t)time(NULL));
 }
 
 // Generates unbiased random float in [0, 1)
 float rng_urand01(void) {
-    float inv_rand_max_plus_one = 1.0 / ((float)RAND_MAX + 1.0);
+    float inv_rand_max_plus_one = 1.0f / ((float)RAND_MAX + 1.0f);
     return (float)rand() * inv_rand_max_plus_one;
 }
 
 // Generates unbiased random float in [0, 1]
 float rng_urand01_closed(void) {
-    float inv_rand_max = 1.0 / (float)RAND_MAX;
+    float inv_rand_max = 1.0f / (float)RAND_MAX;
     return (float)rand() * inv_rand_max;
 }
 
 // Generates unbiased random float in [min, max]
 float rng_urand_range(float min, float max) {
     float u = rng_urand01_closed();
-    return min * (1.0 - u) + max * u;
+    return min + u * (max - min);
 }
 
 // Display matrix
-void mat_display(unsigned int row, unsigned int column, float mat[row][column]) {
-    for (int i = 0; i < row; i++) {
-        for (int j = 0; j < column; j++) {
-            printf("%.3f\t", mat[i][j]);
+void mat_display(float* mat, size_t rows, size_t cols) {
+    for (size_t i = 0; i < rows; i++) {
+        for (size_t j = 0; j < cols; j++) {
+            printf("%.3f\t", mat[i * cols + j]);
         }
         printf("\n");
     }
@@ -131,60 +176,61 @@ void mat_display(unsigned int row, unsigned int column, float mat[row][column]) 
 }
 
 // Copy src to dest
-void mat_cpy(unsigned int row, unsigned int column, float src[row][column], float dest[row][column]) {
-    for (int i = 0; i < row; i++) {
-        for (int j = 0; j < column; j++) {
-            dest[i][j] = src[i][j];
+void mat_cpy(float* dest, float* src, size_t rows, size_t cols) {
+    for (size_t i = 0; i < rows; i++) {
+        for (size_t j = 0; j < cols; j++) {
+            dest[i * cols + j] = src[i * cols + j];
         }
     }
 }
 
 // Zero out the matrix
-void mat_zero(unsigned int row, unsigned int column, float mat[row][column]) {
-    for (int i = 0; i < row; i++) {
-        for (int j = 0; j < column; j++) {
-            mat[i][j] = 0.0f;
+void mat_zero_float(float* mat, size_t rows, size_t cols) {
+    for (size_t i = 0; i < rows; i++) {
+        for (size_t j = 0; j < cols; j++) {
+            mat[i * cols + j] = 0.0f;
         }
     }
 }
 
 // Zero out the matrix
-void mat_zero_char(unsigned int row, unsigned int column, unsigned char mat[row][column]) {
-    for (int i = 0; i < row; i++) {
-        for (int j = 0; j < column; j++) {
-            mat[i][j] = 0;
+void mat_zero_uint(uint8_t* mat, size_t rows, size_t cols) {
+    for (size_t i = 0; i < rows; i++) {
+        for (size_t j = 0; j < cols; j++) {
+            mat[i * cols + j] = 0;
         }
     }
 }
 
 // Fill the matrix with specific value
-void mat_value(unsigned int row, unsigned int column, float value, float mat[row][column]) {
-    for (int i = 0; i < row; i++) {
-        for (int j = 0; j < column; j++) {
-            mat[i][j] = value;
+void mat_value(float* mat, size_t rows, size_t cols, float val) {
+    for (size_t i = 0; i < rows; i++) {
+        for (size_t j = 0; j < cols; j++) {
+            mat[i * cols + j] = val;
         }
     }
 }
 
 // Fill the matrix with random values in given range.
-void mat_random(unsigned int row, unsigned int column, float min, float max, float mat[row][column]) {
-    for (int i = 0; i < row; i++) {
-        for (int j = 0; j < column; j++) {
-            mat[i][j] = rng_urand_range(min, max);
+void mat_random(float* mat, size_t rows, size_t cols, float min, float max) {
+    for (size_t i = 0; i < rows; i++) {
+        for (size_t j = 0; j < cols; j++) {
+            mat[i * cols + j] = rng_urand_range(min, max);
         }
     }
 }
 
 // Save matrix to a file
-void save_matrix(int row, int column, float mat[row][column], const char* filename) {
+void mat_save(float* mat, const char* filename, int rows, int cols, int stride) {
     FILE* f = fopen(filename, "w");
-    if (f == NULL)
+    if (f == NULL) {
         return;
-
+    }
+        
     // We save the matrix in column-major order to match the way we visualize it later.
-    for (int j = column - 1; j >= 0; j--) {
-        for (int i = 0; i < row; i++) {
-            fprintf(f, "%f ", mat[i][j]);
+    for (int j = cols - 1; j >= 0; j--) {
+        for (int i = 0; i < rows; i++) {
+            fprintf(f, "%f ", mat[i * stride + j]);
         }
         fprintf(f, "\n");
     }
@@ -195,54 +241,53 @@ void save_matrix(int row, int column, float mat[row][column], const char* filena
 
 // ################################# Scenarios #################################
 
-void init_lid_driven(float u[X + 1][Y], float v[X][Y + 1], float smoke[X][Y], float p[X][Y]) {
-    rng_init_seed(SEED);
+void init_lid_driven(FluidContext* ctx) {
 
-    mat_zero(X + 1, Y, u);
-    mat_zero(X, Y + 1, v);
-    mat_zero(X, Y, p);
-    mat_zero(X, Y, smoke);
+    mat_zero_float(ctx->u, ctx->x + 1, ctx->y);
+    mat_zero_float(ctx->v, ctx->x, ctx->y + 1);
+    mat_zero_float(ctx->p, ctx->x, ctx->y);
+    mat_zero_float(ctx->smoke, ctx->x, ctx->y);
 
-    mat_zero_char(X, Y, solid); // Set all grids to fluid.
+    mat_zero_uint(ctx->solid, ctx->x, ctx->y); // Set all grids to fluid.
 
     // Solid boundaries.
-    for (int i = 0; i < X; i++) {
-        solid[i][0] = 1;     // Top
-        solid[i][Y - 1] = 1; // Bottom
+    for (int i = 0; i < ctx->x; i++) {
+        ctx->solid[IX(ctx, i, 0)] = 1;          // Top
+        ctx->solid[IX(ctx, i, ctx->y - 1)] = 1; // Bottom
     }
-    for (int j = 0; j < Y; j++) {
-        solid[0][j] = 1;     // Left
-        solid[X - 1][j] = 1; // Right
+    for (int j = 0; j < ctx->y; j++) {
+        ctx->solid[IX(ctx, 0, j)] = 1;          // Left
+        ctx->solid[IX(ctx, ctx->x - 1, j)] = 1; // Right
     }
 
-    for (int i = 0; i < X; i++) {
-        for (int j = 0; j < Y; j++) {
-            if (solid[i][j]) {
-                smoke[i][j] = 0.0f;
+    for (int i = 0; i < ctx->x; i++) {
+        for (int j = 0; j < ctx->y; j++) {
+            if (ctx->solid[IX(ctx, i, j)]) {
+                ctx->smoke[IX(ctx, i, j)] = 0.0f;
             }
         }
     }
 }
 
-void apply_sources_lid_driven(float smoke[X][Y]) {
-    for (int i = 3; i < X - 3; i++) {
-        smoke[i][Y - 3] = 1.0f;
+void apply_sources_lid_driven(FluidContext* ctx) {
+    for (size_t i = 3; i < ctx->x - 3; i++) {
+        ctx->smoke[IX(ctx, i, ctx->y - 3)] = 1.0f;
     }
 }
 
-void apply_boundaries_lid_driven(float u[X + 1][Y], float v[X][Y + 1]) {
-    for (int i = 0; i < X; i++) {
-        for (int j = 0; j < Y; j++) {
-            if (solid[i][j]) {
-                u[i][j] = 0.0f;
-                u[i + 1][j] = 0.0f;
-                v[i][j] = 0.0f;
-                v[i][j + 1] = 0.0f;
+void apply_boundaries_lid_driven(FluidContext* ctx) {
+    for (size_t i = 0; i < ctx->x; i++) {
+        for (size_t j = 0; j < ctx->y; j++) {
+            if (ctx->solid[IX(ctx, i, j)]) {
+                ctx->u[IX_U(ctx, i, j)] = 0.0f;
+                ctx->u[IX_U(ctx, i + 1, j)] = 0.0f;
+                ctx->v[IX_V(ctx, i, j)] = 0.0f;
+                ctx->v[IX_V(ctx, i, j + 1)] = 0.0f;
 
                 // Top
-                if (j == Y - 1) {
-                    u[i][j] = 1.0f;
-                    u[i + 1][j] = 1.0f;
+                if (j == ctx->y - 1) {
+                    ctx->u[IX_U(ctx, i, j)] = 1.0f;
+                    ctx->u[IX_U(ctx, i + 1, j)] = 1.0f;
                 }
             }
         }
@@ -269,7 +314,7 @@ void apply_sources_airfoil(void) {
 
 }
 
-void apply_boundaries_airfoild(void) {
+void apply_boundaries_airfoil(void) {
 
 }
 
@@ -288,155 +333,140 @@ void apply_boundaries_wind_over_city(void) {
 // ################################# Scenarios #################################
 
 // Diffuses the velocity field using Gauss-Seidel iteration.
-void diffuse_velocity(float u[X + 1][Y], float v[X][Y + 1], float visc, float dt, float dx, int iter_count) {
+void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src) {
+
+    mat_cpy(u_dest, (float*)u_src, ctx->x + 1, ctx->y);
+    mat_cpy(v_dest, (float*)v_src, ctx->x, ctx->y + 1);
 
     // Friction coefficient
-    float a = dt * visc / (dx * dx);
-
-    // Temporary arrays to hold the previous iteration's velocity values.
-    static float u_tmp[X + 1][Y];
-    static float v_tmp[X][Y + 1];
-
-    // Copy current velocities to temporary arrays
-    for (int i = 0; i < X + 1; i++) {
-        for (int j = 0; j < Y; j++) {
-            u_tmp[i][j] = u[i][j];
-        }
-    }
-    for (int i = 0; i < X; i++) {
-        for (int j = 0; j < Y + 1; j++) {
-            v_tmp[i][j] = v[i][j];
-        }
-    }
+    float a = ctx->dt * ctx->visc / (ctx->dx * ctx->dx);
 
     // Gauss-Seidel iteration for diffusion
-    for (int iter = 0; iter < iter_count; iter++) {
+    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
         
         // u (horizontal) velocity diffusion
-        for (int i = 1; i < X; i++) {
-            for (int j = 1; j < Y - 1; j++) {
+        for (size_t i = 1; i < ctx->x; i++) {
+            for (size_t j = 1; j < ctx->y - 1; j++) {
                 // Skip solid boundaries
-                if (solid[i - 1][j] || solid[i][j]) {
+                if (ctx->solid[IX(ctx, i - 1, j)] || ctx->solid[IX(ctx, i, j)]) {
                     continue;
                 }
                 
                 // Fetch neighboring velocities (with no-slip condition at solids)
-                float u_left = u[i - 1][j];
-                float u_right = u[i + 1][j];
-                float u_bottom = u[i][j - 1];
-                float u_top = u[i][j + 1];
+                float u_left = u_dest[IX_U(ctx, i - 1, j)];
+                float u_right = u_dest[IX_U(ctx, i + 1, j)];
+                float u_bottom = u_dest[IX_U(ctx, i, j - 1)];
+                float u_top = u_dest[IX_U(ctx, i, j + 1)];
 
                 // Update u using the diffusion formula derived from the discretized diffusion equation.
-                u[i][j] = (u_tmp[i][j] + a * (u_left + u_right + u_bottom + u_top)) / (1.0f + 4.0f * a);
+                u_dest[IX_U(ctx, i, j)] = (u_src[IX_U(ctx, i, j)] + a * (u_left + u_right + u_bottom + u_top)) / (1.0f + 4.0f * a);
             }
         }
 
         // v (vertical) velocity diffusion
-        for (int i = 1; i < X - 1; i++) {
-            for (int j = 1; j < Y; j++) {
-                if (solid[i][j - 1] || solid[i][j]) {
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            for (size_t j = 1; j < ctx->y; j++) {
+                if (ctx->solid[IX(ctx, i, j - 1)] || ctx->solid[IX(ctx, i, j)]) {
                     continue;
                 }
                 
-                float v_bottom = v[i][j - 1];
-                float v_top = v[i][j + 1];
-                float v_left = v[i - 1][j];
-                float v_right = v[i + 1][j];
+                float v_bottom = v_dest[IX_V(ctx, i, j - 1)];
+                float v_top = v_dest[IX_V(ctx, i, j + 1)];
+                float v_left = v_dest[IX_V(ctx, i - 1, j)];
+                float v_right = v_dest[IX_V(ctx, i + 1, j)];
 
-                v[i][j] = (v_tmp[i][j] + a * (v_bottom + v_top + v_left + v_right)) / (1.0f + 4.0f * a);
+                v_dest[IX_V(ctx, i, j)] = (v_src[IX_V(ctx, i, j)] + a * (v_bottom + v_top + v_left + v_right)) / (1.0f + 4.0f * a);
             }
         }
     }
 }
 
 // Computes the divergence of the velocity field.
-void compute_divergence(float u[X + 1][Y], float v[X][Y + 1], float div[X][Y], float p[X][Y], float dx) {
-    float half_inv_dx = 1.0f / dx;
+void compute_divergence(FluidContext* ctx, float* u, float* v) {
+    float inv_dx = 1.0f / ctx->dx;
 
-    for (int i = 1; i < X - 1; i++) {
-        for (int j = 1; j < Y - 1; j++) {
-            if (solid[i][j]) {
-                div[i][j] = 0.0f;
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
+            if (ctx->solid[IX(ctx, i ,j)]) {
+                ctx->div[IX(ctx, i, j)] = 0.0f;
                 continue;
             }
             // Divergence = Right - Left + Top - Bottom
-            float divergence = (u[i + 1][j] - u[i][j] + v[i][j + 1] - v[i][j]) * half_inv_dx;
-            div[i][j] = divergence;
-            p[i][j] = 0.0f;
+            float divergence = (u[IX_U(ctx, i + 1, j)] - u[IX_U(ctx, i, j)] + v[IX_V(ctx, i, j + 1)] - v[IX_V(ctx, i, j)]) * inv_dx;
+            ctx->div[IX(ctx, i, j)] = divergence;
+            ctx->p[IX(ctx, i, j)] = 0.0f;
         }
     }
 }
 
 // Solves the pressure Poisson equation using Gauss-Seidel iteration.
-void solve_pressure(float p[X][Y], float div[X][Y], float dx, float dt, float density, int iter_count) {
-    float cp = (density * dx * dx) / dt;
+void solve_pressure(FluidContext* ctx, float* p, float* div) {
+    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
-    for (int iter = 0; iter < iter_count; iter++) {
-        for (int i = 1; i < X - 1; i++) {
-            for (int j = 1; j < Y - 1; j++) {
+    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            for (size_t j = 1; j < ctx->y - 1; j++) {
                 // P = (Left + Right + Bottom + Top - Divergence * cp) / 4
-                float p_left = solid[i - 1][j] ? p[i][j] : p[i - 1][j];
-                float p_right = solid[i + 1][j] ? p[i][j] : p[i + 1][j];
-                float p_bottom = solid[i][j - 1] ? p[i][j] : p[i][j - 1];
-                float p_top = solid[i][j + 1] ? p[i][j] : p[i][j + 1];
-                p[i][j] = (p_left + p_right + p_bottom + p_top - div[i][j] * cp) * 0.25f;
+                float p_left = ctx->solid[IX(ctx, i - 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i - 1, j)];
+                float p_right = ctx->solid[IX(ctx, i + 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i + 1, j)];
+                float p_bottom = ctx->solid[IX(ctx, i, j - 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j - 1)];
+                float p_top = ctx->solid[IX(ctx, i, j + 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j + 1)];
+                p[IX(ctx, i, j)] = (p_left + p_right + p_bottom + p_top - div[IX(ctx, i, j)] * cp) * 0.25f;
             }
         }
     }
 }
 
 // Subtracts the pressure gradient from the velocity field to enforce incompressibility.
-void subtract_gradient(float u[X + 1][Y], float v[X][Y + 1], float p[X][Y], float dx, float dt, float density) {
-    float scale = dt / (density * dx);
+void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
+    float scale = ctx->dt / (ctx->dens * ctx->dx);
 
     // Horizontal velocity correction
     // i=1 (Left) to i=X-1 (Right)
-    for (int i = 1; i < X; i++) {
-        for (int j = 1; j < Y - 1; j++) {
-            if (solid[i - 1][j] || solid[i][j])
+    for (size_t i = 1; i < ctx->x; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
+            if (ctx->solid[IX(ctx, i - 1, j)] || ctx->solid[IX(ctx, i, j)])
                 continue;
-            u[i][j] -= scale * (p[i][j] - p[i - 1][j]);
+            u[IX_U(ctx, i, j)] -= scale * (p[IX(ctx, i, j)] - p[IX(ctx, i - 1, j)]);
         }
     }
 
     // Vertical velocity correction
     // j=1 (Bottom) to j=Y-1 (Top)
-    for (int i = 1; i < X - 1; i++) {
-        for (int j = 1; j < Y; j++) {
-            if (solid[i - 1][j] || solid[i][j])
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y; j++) {
+            if (ctx->solid[IX(ctx, i, j - 1)] || ctx->solid[IX(ctx, i, j)])
                 continue;
-            v[i][j] -= scale * (p[i][j] - p[i][j - 1]);
+            v[IX_V(ctx, i, j)] -= scale * (p[IX(ctx, i, j)] - p[IX(ctx, i, j - 1)]);
         }
     }
 }
 
 // Advects the smoke density field using semi-Lagrangian advection.
-void advect_smoke(float smoke[X][Y], float u[X + 1][Y], float v[X][Y + 1], float dt, float dx) {
+void advect_smoke(FluidContext* ctx, float* u, float* v, float* smoke_dest, const float* smoke_src) {
 
-    static float temp_smoke[X][Y] = {0};
-
-    for (int i = 1; i < X - 1; i++) {
-        for (int j = 1; j < Y - 1; j++) {
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
 
             // Calculate the average velocity (i, j) at the center of the cell.
             // Since the u (horizontal) and v (vertical) velocities are at the edges, their average will be at the center.
-            float u_avg = (u[i][j] + u[i + 1][j]) * 0.5f;
-            float v_avg = (v[i][j] + v[i][j + 1]) * 0.5f;
+            float u_avg = (u[IX_U(ctx, i, j)] + u[IX_U(ctx, i + 1, j)]) * 0.5f;
+            float v_avg = (v[IX_V(ctx, i, j)] + v[IX_V(ctx, i, j + 1)]) * 0.5f;
 
             // Backtracing
             // We use indices like coordinates.
-            float src_x = (float)i - dt * u_avg / dx;
-            float src_y = (float)j - dt * v_avg / dx;
+            float src_x = (float)i - ctx->dt * u_avg / ctx->dx;
+            float src_y = (float)j - ctx->dt * v_avg / ctx->dx;
 
             // Clamp to boundary
             if (src_x < 0.5f)
                 src_x = 0.5f;
-            if (src_x > X - 1.5f)
-                src_x = X - 1.5f;
+            if (src_x > ctx->x - 1.5f)
+                src_x = ctx->x - 1.5f;
             if (src_y < 0.5f)
                 src_y = 0.5f;
-            if (src_y > Y - 1.5f)
-                src_y = Y - 1.5f;
+            if (src_y > ctx->y - 1.5f)
+                src_y = ctx->y - 1.5f;
 
             // Identify the surrounding 4 cells for bilinear interpolation.
             int i0 = (int)src_x;
@@ -451,37 +481,26 @@ void advect_smoke(float smoke[X][Y], float u[X + 1][Y], float v[X][Y + 1], float
             float sy0 = 1.0f - sy1;
 
             // Weighted average of 4 cells
-            temp_smoke[i][j] = sx0 * (sy0 * smoke[i0][j0] + sy1 * smoke[i0][j1]) + sx1 * (sy0 * smoke[i1][j0] + sy1 * smoke[i1][j1]);
-        }
-    }
-
-    // Transfer new velocities
-    for (int i = 1; i < X - 1; i++) {
-        for (int j = 1; j < Y - 1; j++) {
-            smoke[i][j] = temp_smoke[i][j];
+            smoke_dest[IX(ctx, i, j)] = sx0 * (sy0 * smoke_src[IX(ctx, i0, j0)] + sy1 * smoke_src[IX(ctx, i0, j1)]) + sx1 * (sy0 * smoke_src[IX(ctx, i1, j0)] + sy1 * smoke_src[IX(ctx, i1, j1)]);
         }
     }
 }
 
 // Advects the velocity field using semi-Lagrangian advection.
-void advect_velocity(float u[X + 1][Y], float v[X][Y + 1], float dt, float dx) {
-
-    // temp velocity vectors
-    static float temp_u[X + 1][Y] = {0};
-    static float temp_v[X][Y + 1] = {0};
+void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src) {
 
     // u (horizontal) velocity update
     // u vectors are located on the vertical edges. Position: (i, j + 0.5)
-    for (int i = 1; i < X; i++) {
-        for (int j = 1; j < Y - 1; j++) {
+    for (size_t i = 1; i < ctx->x; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
 
-            float u_vel = u[i][j];
+            float u = u_src[IX_U(ctx, i, j)];
             // To find the velocity v at point u, take the average of the 4 v's around it.
-            float v_vel = (v[i - 1][j] + v[i][j] + v[i - 1][j + 1] + v[i][j + 1]) * 0.25f;
+            float v = (v_src[IX_V(ctx, i - 1, j)] + v_src[IX_V(ctx, i, j)] + v_src[IX_V(ctx, i - 1, j + 1)] + v_src[IX_V(ctx, i, j + 1)]) * 0.25f;
 
             // Backtracking
-            float src_x = (float)i - dt * u_vel / dx;
-            float src_y = ((float)j + 0.5f) - dt * v_vel / dx;
+            float src_x = (float)i - ctx->dt * u / ctx->dx;
+            float src_y = ((float)j + 0.5f) - ctx->dt * v / ctx->dx;
 
             // Since the u-grid is shifted by 0.5 on the Y-axis, we subtract this from the index calculation.
             float idx_x = src_x;
@@ -490,12 +509,12 @@ void advect_velocity(float u[X + 1][Y], float v[X][Y + 1], float dt, float dx) {
             // Clamp for u
             if (idx_x < 0.5f)
                 idx_x = 0.5f;
-            if (idx_x > X - 0.5f)
-                idx_x = X - 0.5f;
+            if (idx_x > ctx->x - 0.5f)
+                idx_x = ctx->x - 0.5f;
             if (idx_y < 0.5f)
                 idx_y = 0.5f;
-            if (idx_y > Y - 1.5f)
-                idx_y = Y - 1.5f;
+            if (idx_y > ctx->y - 1.5f)
+                idx_y = ctx->y - 1.5f;
 
             int i0 = (int)idx_x;
             int i1 = i0 + 1;
@@ -508,22 +527,22 @@ void advect_velocity(float u[X + 1][Y], float v[X][Y + 1], float dt, float dx) {
             float sy0 = 1.0f - sy1;
 
             // Calculate the new value of u using bilinear interpolation.
-            temp_u[i][j] = sx0 * (sy0 * u[i0][j0] + sy1 * u[i0][j1]) + sx1 * (sy0 * u[i1][j0] + sy1 * u[i1][j1]);
+            u_dest[IX_U(ctx, i, j)] = sx0 * (sy0 * u_src[IX_U(ctx, i0, j0)] + sy1 * u_src[IX_U(ctx, i0, j1)]) + sx1 * (sy0 * u_src[IX_U(ctx, i1, j0)] + sy1 * u_src[IX_U(ctx, i1, j1)]);
         }
     }
 
     // v (vertical) velocity update
     // v vectors are located on the horizontal edges. Position: (i + 0.5, j)
-    for (int i = 1; i < X - 1; i++) {
-        for (int j = 1; j < Y; j++) {
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y; j++) {
 
             // To find the velocity u at point v, take the average of the 4 u's around it.
-            float u_vel = (u[i][j - 1] + u[i + 1][j - 1] + u[i][j] + u[i + 1][j]) * 0.25f;
-            float v_vel = v[i][j];
+            float u = (u_src[IX_U(ctx, i, j - 1)] + u_src[IX_U(ctx, i + 1, j - 1)] + u_src[IX_U(ctx, i, j)] + u_src[IX_U(ctx, i + 1, j)]) * 0.25f;
+            float v = v_src[IX_V(ctx, i, j)];
 
             // Backtracking
-            float src_x = ((float)i + 0.5f) - dt * u_vel / dx;
-            float src_y = (float)j - dt * v_vel / dx;
+            float src_x = ((float)i + 0.5f) - ctx->dt * u / ctx->dx;
+            float src_y = (float)j - ctx->dt * v / ctx->dx;
 
             // Since the v-grid is shifted by 0.5 on the X-axis, we subtract this from the index calculation.
             float idx_x = src_x - 0.5f;
@@ -532,12 +551,12 @@ void advect_velocity(float u[X + 1][Y], float v[X][Y + 1], float dt, float dx) {
             // Clamp for v
             if (idx_x < 0.5f)
                 idx_x = 0.5f;
-            if (idx_x > X - 1.5f)
-                idx_x = X - 1.5f;
+            if (idx_x > ctx->x - 1.5f)
+                idx_x = ctx->x - 1.5f;
             if (idx_y < 0.5f)
                 idx_y = 0.5f;
-            if (idx_y > Y - 0.5f)
-                idx_y = Y - 0.5f;
+            if (idx_y > ctx->y - 0.5f)
+                idx_y = ctx->y - 0.5f;
 
             int i0 = (int)idx_x;
             int i1 = i0 + 1;
@@ -550,90 +569,140 @@ void advect_velocity(float u[X + 1][Y], float v[X][Y + 1], float dt, float dx) {
             float sy0 = 1.0f - sy1;
 
             // Calculate the new value of v using bilinear interpolation.
-            temp_v[i][j] = sx0 * (sy0 * v[i0][j0] + sy1 * v[i0][j1]) + sx1 * (sy0 * v[i1][j0] + sy1 * v[i1][j1]);
-        }
-    }
-
-    // Transfer new velocities
-    for (int i = 1; i < X; i++) {
-        for (int j = 1; j < Y - 1; j++) {
-            u[i][j] = temp_u[i][j];
-        }
-    }
-    for (int i = 1; i < X - 1; i++) {
-        for (int j = 1; j < Y; j++) {
-            v[i][j] = temp_v[i][j];
+            v_dest[IX_V(ctx, i, j)] = sx0 * (sy0 * v_src[IX_V(ctx, i0, j0)] + sy1 * v_src[IX_V(ctx, i0, j1)]) + sx1 * (sy0 * v_src[IX_V(ctx, i1, j0)] + sy1 * v_src[IX_V(ctx, i1, j1)]);
         }
     }
 }
 
-/*
-TODO:
-* Structure:
-    - Get rid of VLA approach
-    - Add Heap based matrix system
-* Optimization:
-    - Algorithmic speedup
-    - Row-major & cache-friendly operations
-    - Vector operations
-    - Parallelism
-*/
+// Start the simulation by creating a context with given parameters.
+FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float visc, int iters) {
+    FluidContext* ctx = (FluidContext*)malloc(sizeof(FluidContext));
+    
+    ctx->x = res_x;
+    ctx->y = res_y;
+    ctx->num_cells = res_x * res_y;
+    
+    ctx->dt = dt;
+    ctx->dx = 0.1f;
+    ctx->dens= 1.0f;
+    ctx->visc = visc;
+    ctx->iter_count = iters;
+
+    ctx->u = (float*)calloc((res_x + 1) * res_y, sizeof(float));
+    ctx->v = (float*)calloc(res_x * (res_y + 1), sizeof(float));
+    ctx->p = (float*)calloc(ctx->num_cells, sizeof(float));
+    ctx->div = (float*)calloc(ctx->num_cells, sizeof(float));
+    ctx->smoke = (float*)calloc(ctx->num_cells, sizeof(float));
+    ctx->solid = (uint8_t*)calloc(ctx->num_cells, sizeof(uint8_t));
+
+    ctx->u_prev = (float*)calloc((res_x + 1) * res_y, sizeof(float));
+    ctx->v_prev = (float*)calloc(res_x * (res_y + 1), sizeof(float));
+    ctx->smoke_prev = (float*)calloc(ctx->num_cells, sizeof(float));
+
+    return ctx;
+}
+
+// Clean up the context and free memory.
+void fluid_destroy_context(FluidContext* ctx) {
+    if (!ctx) return;
+    free(ctx->u);
+    free(ctx->v);
+    free(ctx->p);
+    free(ctx->div);
+    free(ctx->smoke);
+    free(ctx->solid);
+    free(ctx->u_prev);
+    free(ctx->v_prev);
+    free(ctx->smoke_prev);
+    free(ctx);
+}
+
+// Executes a single step of the fluid simulation.
+void fluid_step(FluidContext* ctx) {
+
+    // Sources
+    APPLY_SOURCES();
+    APPLY_BOUNDARIES();
+
+    // Velocity Advection
+    advect_velocity(ctx, ctx->u_prev, ctx->v_prev, ctx->u, ctx->v);
+    
+    // Swap pointers
+    SWAP_PTR(ctx->u, ctx->u_prev);
+    SWAP_PTR(ctx->v, ctx->v_prev);
+    
+    APPLY_BOUNDARIES();
+
+    // Velocity Diffusion
+    memcpy(ctx->u_prev, ctx->u, (ctx->x + 1) * ctx->y * sizeof(float));
+    memcpy(ctx->v_prev, ctx->v, ctx->x * (ctx->y + 1) * sizeof(float));
+    
+    diffuse_velocity(ctx, ctx->u, ctx->v, ctx->u_prev, ctx->v_prev);
+    
+    APPLY_BOUNDARIES();
+
+    // Projection
+
+    // Divergence
+    compute_divergence(ctx, ctx->u, ctx->v);
+    
+    // Pressure Solve
+    solve_pressure(ctx, ctx->p, ctx->div);
+    
+    // Gradient Subtraction
+    subtract_gradient(ctx, ctx->u, ctx->v, ctx->p);
+    
+    APPLY_BOUNDARIES();
+
+    // Scalar Advection
+    advect_smoke(ctx, ctx->u, ctx->v, ctx->smoke_prev, ctx->smoke);
+    
+    SWAP_PTR(ctx->smoke, ctx->smoke_prev);
+    
+    APPLY_BOUNDARIES();
+}
 
 int main(void) {
-    float u[X + 1][Y];
-    float v[X][Y + 1];
-    float p[X][Y];
-    float div[X][Y];
-    float smoke[X][Y];
+    FluidContext* ctx = fluid_create_context(128, 128, 0.016f, 0.01f, 20);
+
+    clock_t start_time = clock();
 
     INIT_SCENARIO();
 
     int steps_per_frame = 20;
     int num_frames = 800;
+
     for (int frame = 0; frame < num_frames; frame++) {
         for (int step = 0; step < steps_per_frame; step++) {
-
-            APPLY_SOURCES();
-
-            APPLY_BOUNDARIES();
-
-            // Advection
-            advect_velocity(u, v, DT, DX);
-            diffuse_velocity(u, v, VISCOSITY, DT, DX, ITER);
-            advect_smoke(smoke, u, v, DT, DX);
-
-            APPLY_BOUNDARIES();
-
-            // Divergence
-            compute_divergence(u, v, div, p, DX);
-
-            // Pressure
-            solve_pressure(p, div, DX, DT, DENSITY, ITER);
-
-            // Projection
-            subtract_gradient(u, v, p, DX, DT, DENSITY);
-
-            APPLY_BOUNDARIES();
+            fluid_step(ctx);
         }
         // Write To File.
 
         char filename[16];
 
         sprintf(filename, "frames/u_%04d.txt", frame);
-        save_matrix(X + 1, Y, u, filename);
+        mat_save(ctx->u, filename, ctx->x, ctx->y, ctx->y);
 
         sprintf(filename, "frames/v_%04d.txt", frame);
-        save_matrix(X, Y + 1, v, filename);
+        mat_save(ctx->v, filename, ctx->x, ctx->y, ctx->y + 1);
 
         sprintf(filename, "frames/p_%04d.txt", frame);
-        save_matrix(X, Y, p, filename);
+        mat_save(ctx->p, filename, ctx->x, ctx->y, ctx->y);
 
         sprintf(filename, "frames/div_%04d.txt", frame);
-        save_matrix(X, Y, div, filename);
+        mat_save(ctx->div, filename, ctx->x, ctx->y, ctx->y);
 
         sprintf(filename, "frames/smoke_%04d.txt", frame);
-        save_matrix(X, Y, smoke, filename);
+        mat_save(ctx->smoke, filename, ctx->x, ctx->y, ctx->y);
     }
+
+    clock_t end_time = clock();
+    double time_spent = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+    int total_frame = num_frames * steps_per_frame;
+    double fps = (double)total_frame / time_spent;
+    printf("Simulated %d frames in %.2f seconds (%.2f FPS)\n", total_frame, time_spent, fps);
+
+    fluid_destroy_context(ctx);
 
     return 0;
 }
