@@ -4,17 +4,22 @@
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 #include <sys/stat.h>
+
+#ifndef M_PI
+    #define M_PI 3.14159265358979323846f
+#endif
 
 #define SCENARIO_KARMAN
 
 #ifdef SCENARIO_LID_DRIVEN
     #define INIT_SCENARIO()       init_lid_driven(ctx)
-    #define APPLY_BOUNDARIES()    apply_boundaries_lid_driven(ctx)
+    #define APPLY_BOUNDARIES()    apply_boundaries_lid_driven(ctx, p)
     #define APPLY_SOURCES()       apply_sources_lid_driven(ctx)
 #elif defined(SCENARIO_KARMAN)
-    #define INIT_SCENARIO()       init_karman_vortex(ctx)
-    #define APPLY_BOUNDARIES()    apply_boundaries_karman_vortex(ctx)
+    #define INIT_SCENARIO()       init_karman_vortex(ctx, p)
+    #define APPLY_BOUNDARIES()    apply_boundaries_karman_vortex(ctx, p)
     #define APPLY_SOURCES()       apply_sources_karman_vortex(ctx)
 #elif defined(SCENARIO_AIRFOIL)
     #define INIT_SCENARIO()       init_airfoil(ctx)
@@ -26,45 +31,63 @@
     #define APPLY_SOURCES()       apply_sources_wind_over_city(ctx)
 #endif
 
+// typedef void (*PressureSolver)(FluidContext* ctx, float* p, float* div);
+
 // Fluid Simulation Context
 typedef struct {
 
     // Domain Dimensions
-    size_t x;           // Grid width
-    size_t y;           // Grid height
-    size_t num_cells;   // Total grid count
+    size_t x;               // Grid width in pixels
+    size_t y;               // Grid height in pixels
+    size_t num_cells;       // grid height * grid width in pixels
 
     // Physics Properties
-    float dt;           // Time step
-    float dx;           // Grid size
-    float dens;         // Density of the fluid
-    float visc;         // Viscosity of the fluid
-    int iter_count;     // Iteration count for solver
+    float dt;               // Time step in seconds
+    float dx;               // Grid size in meters
+    float dens;             // Density of the fluid
+    float visc;             // Dynamic viscosity of the fluid
+    float reynolds;         // Reynolds number
+    float omega;            // Over-relaxation factor for pressure solver
+    int iter_count;         // Iteration count for solver
+    // PressureSolver pressure_solver;
 
     // Vector Fields
-    float* u;           // Horizontal velocity
-    float* v;           // Vertical velocity
+    float* u;               // Horizontal velocity
+    float* v;               // Vertical velocity
     
     // Solver Fields
-    float* p;           // Pressure
-    float* div;         // Divergence
+    float* p;               // Pressure
+    float* div;             // Divergence
     
     // Transport Fields
-    float* smoke;       // Smoke
+    float* smoke;           // Smoke
     
     // Geometry
-    uint8_t* solid;     // Boundary Mask
+    uint8_t* solid;         // Boundary Mask
 
     // Previous State
-    float* u_prev;      // Previous horizontal velocity
-    float* v_prev;      // Previous vertical velocity
-    float* smoke_prev;  // Previous smoke
+    float* u_prev;          // Previous horizontal velocity
+    float* v_prev;          // Previous vertical velocity
+    float* smoke_prev;      // Previous smoke
 
 } FluidContext;
+
+typedef struct {
+    float inlet_velocity;   // Characteristic velocity for the scenario
+    float length_scale;     // Characteristic length scale for the scenario
+    float target_omega;     // Target over-relaxation factor for the pressure solver
+
+    float obstacle_x;       // X-coordinate of the center of the obstacle
+    float obstacle_y;       // Y-coordinate of the center of the obstacle
+    size_t obstacle_radius; // Radius of the obstacle
+} ScenarioParams;
 
 #define IX(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
 #define IX_U(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
 #define IX_V(ctx, i, j) ((size_t)(i) * ((ctx)->y + 1) + (size_t)(j))
+
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 #define SWAP_PTR(x0, x) do { float* tmp = x0; x0 = x; x = tmp; } while(0)
 
@@ -243,17 +266,17 @@ void mat_save(float* mat, const char* filename, int rows, int cols, int stride) 
 
 void init_lid_driven(FluidContext* ctx) {
     // Solid boundaries.
-    for (int i = 0; i < ctx->x; i++) {
+    for (size_t i = 0; i < ctx->x; i++) {
         ctx->solid[IX(ctx, i, 0)] = 1;          // Top
         ctx->solid[IX(ctx, i, ctx->y - 1)] = 1; // Bottom
     }
-    for (int j = 0; j < ctx->y; j++) {
+    for (size_t j = 0; j < ctx->y; j++) {
         ctx->solid[IX(ctx, 0, j)] = 1;          // Left
         ctx->solid[IX(ctx, ctx->x - 1, j)] = 1; // Right
     }
 
-    for (int i = 0; i < ctx->x; i++) {
-        for (int j = 0; j < ctx->y; j++) {
+    for (size_t i = 0; i < ctx->x; i++) {
+        for (size_t j = 0; j < ctx->y; j++) {
             if (ctx->solid[IX(ctx, i, j)]) {
                 ctx->smoke[IX(ctx, i, j)] = 0.0f;
             }
@@ -267,7 +290,7 @@ void apply_sources_lid_driven(FluidContext* ctx) {
     }
 }
 
-void apply_boundaries_lid_driven(FluidContext* ctx) {
+void apply_boundaries_lid_driven(FluidContext* ctx, ScenarioParams p) {
     for (size_t i = 0; i < ctx->x; i++) {
         for (size_t j = 0; j < ctx->y; j++) {
             if (ctx->solid[IX(ctx, i, j)]) {
@@ -278,27 +301,23 @@ void apply_boundaries_lid_driven(FluidContext* ctx) {
 
                 // Top
                 if (j == ctx->y - 1) {
-                    ctx->u[IX_U(ctx, i, j)] = 1.0f;
-                    ctx->u[IX_U(ctx, i + 1, j)] = 1.0f;
+                    ctx->u[IX_U(ctx, i, j)] = p.inlet_velocity;
+                    ctx->u[IX_U(ctx, i + 1, j)] = p.inlet_velocity;
                 }
             }
         }
     }
 }
 
-void init_karman_vortex(FluidContext* ctx) {
+void init_karman_vortex(FluidContext* ctx, ScenarioParams p) {
     for (size_t i = 0; i < ctx->x; i++) {
         ctx->solid[IX(ctx, i, 0)] = 1;          // Bottom
         ctx->solid[IX(ctx, i, ctx->y - 1)] = 1; // Top
     }
 
-    // Obstacle
-    size_t cx = ctx->x / 16;
-    size_t cy = ctx->y / 2;
-    size_t r = 5;
     for (size_t i = 0; i < ctx->x; i++) {
         for (size_t j = 0; j < ctx->y; j++) {
-            if ((i - cx) * (i - cx) + (j - cy) * (j - cy) <= r * r) {
+            if ((i - p.obstacle_x) * (i - p.obstacle_x) + (j - p.obstacle_y) * (j - p.obstacle_y) <= p.obstacle_radius * p. obstacle_radius) {
                 ctx->solid[IX(ctx, i, j)] = 1;
             }
         }
@@ -308,7 +327,7 @@ void init_karman_vortex(FluidContext* ctx) {
     for (size_t i = 0; i < ctx->x; i++) {
         for (size_t j = 0; j < ctx->y; j++) {
             if (!(ctx->solid[IX(ctx, i, j)]) && !(ctx->solid[IX(ctx, i - 1, j)])) {
-                ctx->u[IX_U(ctx, i, j)] = 1.0f;
+                ctx->u[IX_U(ctx, i, j)] = p.inlet_velocity;
             }
         }
     }
@@ -322,7 +341,7 @@ void apply_sources_karman_vortex(FluidContext* ctx) {
     }
 }
 
-void apply_boundaries_karman_vortex(FluidContext* ctx) {
+void apply_boundaries_karman_vortex(FluidContext* ctx, ScenarioParams p) {
     // Zero out velocities at solid boundaries (No-Slip condition)
     for (size_t i = 0; i < ctx->x; i++) {
         for (size_t j = 0; j < ctx->y; j++) {
@@ -337,7 +356,7 @@ void apply_boundaries_karman_vortex(FluidContext* ctx) {
 
     // Inlet (Left Wall)
     for (size_t j = 1; j < ctx->y - 1; j++) {
-        ctx->u[IX_U(ctx, 1, j)] = 1.0f;
+        ctx->u[IX_U(ctx, 1, j)] = p.inlet_velocity;
     }    
 
     // Outlet
@@ -379,8 +398,10 @@ void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const flo
     mat_cpy(u_dest, (float*)u_src, ctx->x + 1, ctx->y);
     mat_cpy(v_dest, (float*)v_src, ctx->x, ctx->y + 1);
 
+    float kinematic_visc = ctx->visc / ctx->dens;
+
     // Friction coefficient
-    float a = ctx->dt * ctx->visc / (ctx->dx * ctx->dx);
+    float a = ctx->dt * kinematic_visc / (ctx->dx * ctx->dx);
 
     // Gauss-Seidel iteration for diffusion
     for (size_t iter = 0; iter < ctx->iter_count; iter++) {
@@ -388,10 +409,11 @@ void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const flo
         for (size_t i = 1; i < ctx->x; i++) {
             for (size_t j = 1; j < ctx->y - 1; j++) {
                 // Skip solid boundaries
+                // Dirichlet boundary condition at solids: u = 0. This means that the velocity at the solid boundary is zero,
+                // and we can use this to compute the diffusion for the neighboring fluid cells.
                 if (ctx->solid[IX(ctx, i - 1, j)] || ctx->solid[IX(ctx, i, j)]) {
                     continue;
                 }
-                
                 // Fetch neighboring velocities (with no-slip condition at solids)
                 float u_left = u_dest[IX_U(ctx, i - 1, j)];
                 float u_right = u_dest[IX_U(ctx, i + 1, j)];
@@ -426,8 +448,10 @@ void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
 
     mat_cpy(dest, (float*)src, ctx->x, ctx->y);
 
+    float kinematic_visc = ctx->visc / ctx->dens;
+    
     // Friction coefficient
-    float a = ctx->dt * ctx->visc / (ctx->dx * ctx->dx);
+    float a = ctx->dt * kinematic_visc / (ctx->dx * ctx->dx);
 
     // Gauss-Seidel iteration for diffusion
     for (size_t iter = 0; iter < ctx->iter_count; iter++) {
@@ -437,7 +461,7 @@ void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
                 if (ctx->solid[IX(ctx, i, j)]) {
                     continue;
                 }
-                
+                // 
                 // Fetch neighboring velocities (with no-slip condition at solids)
                 float left = dest[IX(ctx, i - 1, j)];
                 float right = dest[IX(ctx, i + 1, j)];
@@ -601,21 +625,50 @@ void compute_divergence(FluidContext* ctx, float* u, float* v) {
     }
 }
 
-// Solves the pressure Poisson equation using Gauss-Seidel iteration.
-void solve_pressure(FluidContext* ctx, float* p, float* div) {
+// Solves the pressure Poisson equation using Red-Black Gauss-Seidel.
+void solve_pressure_rbgs(FluidContext* ctx, float* p, float* div) {
+
+}
+
+// Solves the pressure Poisson equation using successive over-relaxation.
+void solve_pressure_sor(FluidContext* ctx, float* p, float* div) {
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
     for (size_t iter = 0; iter < ctx->iter_count; iter++) {
+#ifdef VALIDATE
+        float max_error = 0.0f;
+#endif // VALIDATE
         for (size_t i = 1; i < ctx->x - 1; i++) {
             for (size_t j = 1; j < ctx->y - 1; j++) {
+                if (ctx->solid[IX(ctx, i, j)]) continue;
+
                 // P = (Left + Right + Bottom + Top - Divergence * cp) / 4
+                // If the neighbor is solid, we use the current cell's pressure for that neighbor (Neumann boundary condition).
+
                 float p_left = ctx->solid[IX(ctx, i - 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i - 1, j)];
                 float p_right = ctx->solid[IX(ctx, i + 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i + 1, j)];
                 float p_bottom = ctx->solid[IX(ctx, i, j - 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j - 1)];
                 float p_top = ctx->solid[IX(ctx, i, j + 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j + 1)];
-                p[IX(ctx, i, j)] = (p_left + p_right + p_bottom + p_top - div[IX(ctx, i, j)] * cp) * 0.25f;
+
+                float p_new = (p_left + p_right + p_bottom + p_top - div[IX(ctx, i, j)] * cp) * 0.25f;
+                float p_old = p[IX(ctx, i, j)];
+
+                p[IX(ctx, i, j)] = (1.0f - ctx->omega) * p_old + ctx->omega * p_new; // SOR update
+#ifdef VALIDATE
+                max_error = MAX(max_error, fabsf(p[IX(ctx, i, j)] - p_old));
+#endif // VALIDATE
+                
             }
         }
+#ifdef VALIDATE
+        if (max_error < 1e-4f) {
+            printf("Pressure solver converged in %zu iterations with max error %.6f\n", iter + 1, max_error);
+            break; // Convergence check
+        }
+        if (iter == ctx->iter_count - 1) {
+            printf("Pressure solver reached max iterations with max error %.6f\n", max_error);
+        }
+#endif // VALIDATE
     }
 }
 
@@ -645,7 +698,7 @@ void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
 }
 
 // Start the simulation by creating a context with given parameters.
-FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float visc, int iters) {
+FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters) {
     FluidContext* ctx = (FluidContext*)malloc(sizeof(FluidContext));
     
     ctx->x = res_x;
@@ -653,8 +706,8 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float v
     ctx->num_cells = res_x * res_y;
     
     ctx->dt = dt;
-    ctx->dx = 0.1f;
-    ctx->dens= 1.0f;
+    ctx->dx = dx;
+    ctx->dens= dens;
     ctx->visc = visc;
     ctx->iter_count = iters;
 
@@ -670,6 +723,29 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float v
     ctx->smoke_prev = (float*)calloc(ctx->num_cells, sizeof(float));
 
     return ctx;
+}
+
+// Calculate necessary physics parameters based on the scenario and context settings.
+void fluid_setup_physics(FluidContext* ctx, ScenarioParams p) {
+    // Calculate reynolds
+    if (ctx->visc > 0.0f) { // avoid zero-divison
+        ctx->reynolds = (ctx->dens * p.inlet_velocity * p.length_scale ) / ctx->visc;
+    } else { // clamp
+        ctx->reynolds = 0.0f;
+    }
+
+    // Find optimum omega for different scenarios
+    if (p.target_omega <= 0.0f) {
+        ctx->omega = 2.0f / (1.0f + sinf(M_PI / (float)ctx->x)); 
+    } else {
+        ctx->omega = p.target_omega;
+    }
+
+    if (ctx->omega >= 2.0f) {
+        ctx->omega = 1.85f; // Clamp for upperbound
+    } else if (ctx->omega < 1.0f) {
+        ctx->omega = 1.0f;  // Back to gauss-seidel
+    }
 }
 
 // Clean up the context and free memory.
@@ -688,7 +764,7 @@ void fluid_destroy_context(FluidContext* ctx) {
 }
 
 // Executes a single step of the fluid simulation.
-void fluid_step(FluidContext* ctx) {
+void fluid_step(FluidContext* ctx, ScenarioParams p) {
 
     // Sources
     APPLY_SOURCES();
@@ -717,7 +793,8 @@ void fluid_step(FluidContext* ctx) {
     compute_divergence(ctx, ctx->u, ctx->v);
     
     // Pressure Solve
-    solve_pressure(ctx, ctx->p, ctx->div);
+
+    solve_pressure_sor(ctx, ctx->p, ctx->div);
     
     // Gradient Subtraction
     subtract_gradient(ctx, ctx->u, ctx->v, ctx->p);
@@ -734,27 +811,46 @@ void fluid_step(FluidContext* ctx) {
 
 // TODO:
 // header file system & detailed function explanations
-// red-black gauss-seidel & overrelaxation & parallelism & simd implemenation
+// red-black gauss-seidel & parallelism & simd implemenation
 // real-time rendering
 // different scenarios (airfoil, wind over city)
+// consider multigrid for large scale simulations
 
 int main(void) {
-    FluidContext* ctx = fluid_create_context(256, 128, 0.016f, 0.001f, 20);
+    FluidContext* ctx = fluid_create_context(256, 256, 0.016f, 0.1f, 1.0f, 0.001f, 20);
+    ScenarioParams p;
 
+    p.inlet_velocity = 1.0f;
+    p.obstacle_x = ctx->x / 4;
+    p.obstacle_y = ctx->y / 2;
+    p.obstacle_radius = 10;
+    p.length_scale = 2.0f * p.obstacle_radius * ctx->dx; // karman
+    // p.length_scale = (float)ctx->x * ctx->dx; // lid-driven
+    p.target_omega = 0.0f; // 0 means auto-calculate
+
+    fluid_setup_physics(ctx, p);
+
+#ifdef VALIDATE
+    printf("Reynolds Number: %.2f\n", ctx->reynolds);
+    printf("Omega: %.4f\n", ctx->omega);
+#endif // VALIDATE
+
+#ifdef DBG
     clock_t start_time = clock();
+#endif // DBG
 
     INIT_SCENARIO();
 
     int steps_per_frame = 20;
-    int num_frames = 500;
+    int num_frames = 400;
 
     for (int frame = 0; frame < num_frames; frame++) {
         for (int step = 0; step < steps_per_frame; step++) {
-            fluid_step(ctx);
+            fluid_step(ctx, p);
         }
         // Write To File.
-
-        char filename[16];
+#ifndef DBG
+        char filename[22];
 
         sprintf(filename, "frames/u_%04d.txt", frame);
         mat_save(ctx->u, filename, ctx->x, ctx->y, ctx->y);
@@ -770,13 +866,17 @@ int main(void) {
 
         sprintf(filename, "frames/smoke_%04d.txt", frame);
         mat_save(ctx->smoke, filename, ctx->x, ctx->y, ctx->y);
+#endif // DBG
     }
 
+
+#ifdef DBG
     clock_t end_time = clock();
     double time_spent = (double)(end_time - start_time) / CLOCKS_PER_SEC;
     int total_frame = num_frames * steps_per_frame;
     double fps = (double)total_frame / time_spent;
     printf("Simulated %d frames in %.2f seconds (%.2f FPS)\n", total_frame, time_spent, fps);
+#endif // DBG
 
     fluid_destroy_context(ctx);
 
