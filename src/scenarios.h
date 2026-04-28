@@ -9,22 +9,22 @@ void init_lid_driven(FluidContext* ctx);
 void apply_sources_lid_driven(FluidContext* ctx);
 void apply_boundaries_lid_driven(FluidContext* ctx, ScenarioParams p);
 
-// Karman-Vortex Street
+// Von Karman-Vortex Street
 
 void init_karman_vortex(FluidContext* ctx, ScenarioParams p);
 void apply_sources_karman_vortex(FluidContext* ctx);
 void apply_boundaries_karman_vortex(FluidContext* ctx, ScenarioParams p);
 
-// Airfoil
+// NACA 2412 Airfoil
 
-void init_airfoil(void);
-void apply_sources_airfoil(void);
-void apply_boundaries_airfoil(void);
+void init_airfoil(FluidContext* ctx, ScenarioParams p);
+void apply_sources_airfoil(FluidContext* ctx, ScenarioParams p);
+void apply_boundaries_airfoil(FluidContext* ctx, ScenarioParams p);
 
-// Wind Over City
+// Urban City
 
-void init_wind_over_city(void);
-void apply_sources_wind_over_city(void);
-void apply_boundaries_wind_over_city(void);
+void init_urban_city(FluidContext* ctx, ScenarioParams p);
+void apply_sources_urban_city(FluidContext* ctx, ScenarioParams p);
+void apply_boundaries_urban_city(FluidContext* ctx, ScenarioParams p);
 
 #endif // SCENARIOS_H

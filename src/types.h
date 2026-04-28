@@ -1,7 +1,7 @@
 #ifndef TYPES_H
 #define TYPES_H
 
-#include <stdio.h>
+#include <stddef.h>
 #include <stdint.h>
 
 // typedef void (*PressureSolver)(FluidContext* ctx, float* p, float* div);
@@ -53,6 +53,10 @@ typedef struct {
     float obstacle_x;       // X-coordinate of the center of the obstacle
     float obstacle_y;       // Y-coordinate of the center of the obstacle
     size_t obstacle_radius; // Radius of the obstacle
+
+    float chord_length;     // Length of the airfoil's chord
+    float angle_of_attack;  // Angle of attack for the airfoil
+
 } ScenarioParams;
 
 #endif // TYPES_H

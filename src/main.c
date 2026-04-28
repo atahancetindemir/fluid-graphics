@@ -1,3 +1,7 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
 #include "defines.h"
 #include "types.h"
 #include "utilities.h"
@@ -6,9 +10,8 @@
 
 // TODO:
 // red-black gauss-seidel & parallelism & simd implemenation
-// real-time rendering
-// different scenarios (airfoil, wind over city)
-// consider multigrid for large scale simulations
+// real-time rendering & velocity visualizer for urban city and airfoil
+// scenario dispatcher with dynamic parameters
 
 int main(void) {
     FluidContext* ctx = fluid_create_context(256, 256, 0.016f, 0.1f, 1.0f, 0.001f, 20);
@@ -18,8 +21,21 @@ int main(void) {
     p.obstacle_x = ctx->x / 4;
     p.obstacle_y = ctx->y / 2;
     p.obstacle_radius = 10;
-    p.length_scale = 2.0f * p.obstacle_radius * ctx->dx; // karman
-    // p.length_scale = (float)ctx->x * ctx->dx; // lid-driven
+
+    // Karman Vortex Street: Length Scale = Cylinder Diameter
+    // p.length_scale = 2.0f * p.obstacle_radius * ctx->dx;
+
+    // Lid-Driven Cavity: Length Scale = Domain Size
+    // p.length_scale = (float)ctx->x * ctx->dx;
+
+    // Airfoil: Length Scale = Chord Length
+    // p.chord_length = 20.0f;
+    // p.angle_of_attack = 10.0f;
+    // p.length_scale = p.chord_length;
+
+    // Urban City: Length Scale = Characteristic Building Size
+    p.length_scale = (float)ctx->x * 0.08f * ctx->dx;
+
     p.target_omega = 0.0f; // 0 means auto-calculate
 
     fluid_setup_physics(ctx, p);
@@ -35,15 +51,15 @@ int main(void) {
 
     INIT_SCENARIO();
 
-    int steps_per_frame = 20;
-    int num_frames = 400;
+    size_t steps_per_frame = 20;
+    size_t num_frames = 200;
 
-    for (int frame = 0; frame < num_frames; frame++) {
-        for (int step = 0; step < steps_per_frame; step++) {
+    for (size_t frame = 0; frame < num_frames; frame++) {
+        for (size_t step = 0; step < steps_per_frame; step++) {
             fluid_step(ctx, p);
         }
         // Write To File.
-#ifndef DBG
+#ifdef DBG
         char filename[22];
 
         sprintf(filename, "frames/u_%04d.txt", frame);

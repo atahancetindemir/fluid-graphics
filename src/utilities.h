@@ -2,9 +2,34 @@
 #define UTILITIES_H
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <time.h>
-#include <stdlib.h>
+
+#define IX(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
+#define IX_U(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
+#define IX_V(ctx, i, j) ((size_t)(i) * ((ctx)->y + 1) + (size_t)(j))
+
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+#define SWAP_PTR(x0, x) do { float* tmp = x0; x0 = x; x = tmp; } while(0)
+
+#define BUILD_BLOCK(start_x_pct, start_y_pct, w_pct, h_pct) \
+    do { \
+        size_t sx = (size_t)(ctx->x * (start_x_pct)); \
+        size_t sy = (size_t)(ctx->y * (start_y_pct)); \
+        size_t bw = (size_t)(ctx->x * (w_pct)); \
+        size_t bh = (size_t)(ctx->y * (h_pct)); \
+        for (size_t i = sx; i < sx + bw; i++) { \
+            for (size_t j = sy; j < sy + bh; j++) { \
+                if (i < ctx->x && j < ctx->y) { \
+                    ctx->solid[IX(ctx, i, j)] = 1; \
+                } \
+            } \
+        } \
+    } while(0)
 
 // Initializes rng with a seed
 static inline void rng_init_seed(uint32_t seed) {

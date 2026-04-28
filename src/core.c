@@ -1,4 +1,9 @@
+#include "core.h"
+
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #include <math.h>
 
 #include "types.h"
@@ -56,7 +61,6 @@ Y
 +--------------------------+--------------------------+--------------------------+
 */
 
-// Diffuses the velocity field using Gauss-Seidel iteration.
 void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src) {
 
     mat_cpy(u_dest, (float*)u_src, ctx->x + 1, ctx->y);
@@ -107,7 +111,6 @@ void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const flo
     }
 }
 
-// Diffuses the scalar field with Gauss-Seidel iteration.
 void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
 
     mat_cpy(dest, (float*)src, ctx->x, ctx->y);
@@ -125,7 +128,6 @@ void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
                 if (ctx->solid[IX(ctx, i, j)]) {
                     continue;
                 }
-                // 
                 // Fetch neighboring velocities (with no-slip condition at solids)
                 float left = dest[IX(ctx, i - 1, j)];
                 float right = dest[IX(ctx, i + 1, j)];
@@ -139,7 +141,6 @@ void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
     }
 }
 
-// Advect the scalar field with given velocities using semi-Lagrangian advection.
 void advect_scalar(FluidContext* ctx, float* dest, const float* src, float* u, float* v) {
 
     for (size_t i = 1; i < ctx->x - 1; i++) {
@@ -183,7 +184,6 @@ void advect_scalar(FluidContext* ctx, float* dest, const float* src, float* u, f
     }
 }
 
-// Advects the velocity field with self-advection using semi-Lagrangian advection.
 void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src) {
 
     // u (horizontal) velocity update
@@ -271,7 +271,6 @@ void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const floa
     }
 }
 
-// Computes the divergence of the velocity field.
 void compute_divergence(FluidContext* ctx, float* u, float* v) {
     float inv_dx = 1.0f / ctx->dx;
 
@@ -289,12 +288,10 @@ void compute_divergence(FluidContext* ctx, float* u, float* v) {
     }
 }
 
-// Solves the pressure Poisson equation using Red-Black Gauss-Seidel.
 void solve_pressure_rbgs(FluidContext* ctx, float* p, float* div) {
 
 }
 
-// Solves the pressure Poisson equation using successive over-relaxation.
 void solve_pressure_sor(FluidContext* ctx, float* p, float* div) {
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
@@ -336,7 +333,6 @@ void solve_pressure_sor(FluidContext* ctx, float* p, float* div) {
     }
 }
 
-// Subtracts the pressure gradient from the velocity field to enforce incompressibility.
 void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
     float scale = ctx->dt / (ctx->dens * ctx->dx);
 
@@ -361,7 +357,6 @@ void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
     }
 }
 
-// Start the simulation by creating a context with given parameters.
 FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters) {
     FluidContext* ctx = (FluidContext*)malloc(sizeof(FluidContext));
     
@@ -389,7 +384,6 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float d
     return ctx;
 }
 
-// Calculate necessary physics parameters based on the scenario and context settings.
 void fluid_setup_physics(FluidContext* ctx, ScenarioParams p) {
     // Calculate reynolds
     if (ctx->visc > 0.0f) { // avoid zero-divison
@@ -400,7 +394,7 @@ void fluid_setup_physics(FluidContext* ctx, ScenarioParams p) {
 
     // Find optimum omega for different scenarios
     if (p.target_omega <= 0.0f) {
-        ctx->omega = 2.0f / (1.0f + sinf(M_PI / (float)ctx->x)); 
+        ctx->omega = 2.0f / (1.0f + sinf(PI / (float)ctx->x)); 
     } else {
         ctx->omega = p.target_omega;
     }
@@ -412,7 +406,6 @@ void fluid_setup_physics(FluidContext* ctx, ScenarioParams p) {
     }
 }
 
-// Clean up the context and free memory.
 void fluid_destroy_context(FluidContext* ctx) {
     if (!ctx) return;
     free(ctx->u);
@@ -427,7 +420,6 @@ void fluid_destroy_context(FluidContext* ctx) {
     free(ctx);
 }
 
-// Executes a single step of the fluid simulation.
 void fluid_step(FluidContext* ctx, ScenarioParams p) {
 
     // Sources
