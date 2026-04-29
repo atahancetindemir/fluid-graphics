@@ -7,8 +7,8 @@
 #include <math.h>
 
 #include "types.h"
-#include "defines.h"
 #include "utilities.h"
+#include "scenarios.h"
 
 /*
 MAC GRID (STAGGERED GRID) MEMORY & SPATIAL LAYOUT
@@ -420,11 +420,11 @@ void fluid_destroy_context(FluidContext* ctx) {
     free(ctx);
 }
 
-void fluid_step(FluidContext* ctx, ScenarioParams p) {
+void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
 
     // Sources
-    APPLY_SOURCES();
-    APPLY_BOUNDARIES();
+    s.apply_sources(ctx, p);
+    s.apply_boundaries(ctx, p);
 
     // Velocity Advection
     advect_velocity(ctx, ctx->u_prev, ctx->v_prev, ctx->u, ctx->v);
@@ -433,7 +433,7 @@ void fluid_step(FluidContext* ctx, ScenarioParams p) {
     SWAP_PTR(ctx->u, ctx->u_prev);
     SWAP_PTR(ctx->v, ctx->v_prev);
     
-    APPLY_BOUNDARIES();
+    s.apply_boundaries(ctx, p);
 
     // Velocity Diffusion
     memcpy(ctx->u_prev, ctx->u, (ctx->x + 1) * ctx->y * sizeof(float));
@@ -441,7 +441,7 @@ void fluid_step(FluidContext* ctx, ScenarioParams p) {
     
     diffuse_velocity(ctx, ctx->u, ctx->v, ctx->u_prev, ctx->v_prev);
     
-    APPLY_BOUNDARIES();
+    s.apply_boundaries(ctx, p);
 
     // Projection
 
@@ -455,12 +455,12 @@ void fluid_step(FluidContext* ctx, ScenarioParams p) {
     // Gradient Subtraction
     subtract_gradient(ctx, ctx->u, ctx->v, ctx->p);
     
-    APPLY_BOUNDARIES();
+    s.apply_boundaries(ctx, p);
 
     // Scalar Advection
     advect_scalar(ctx, ctx->smoke_prev, ctx->smoke, ctx->u, ctx->v);
     
     SWAP_PTR(ctx->smoke, ctx->smoke_prev);
     
-    APPLY_BOUNDARIES();
+    s.apply_boundaries(ctx, p);
 }

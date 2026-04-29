@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #include "types.h"
+#include "scenarios.h"
 
 // Diffuses the velocity field using Gauss-Seidel iteration.
 void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src);
@@ -39,6 +40,6 @@ void fluid_setup_physics(FluidContext* ctx, ScenarioParams p);
 void fluid_destroy_context(FluidContext* ctx);
 
 // Executes a single step of the fluid simulation.
-void fluid_step(FluidContext* ctx, ScenarioParams p);
+void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s);
 
 #endif // CORE_H

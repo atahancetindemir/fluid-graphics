@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include "defines.h"
 #include "types.h"
 #include "utilities.h"
 #include "scenarios.h"
@@ -10,33 +9,16 @@
 
 // TODO:
 // red-black gauss-seidel & parallelism & simd implemenation
-// real-time rendering & velocity visualizer for urban city and airfoil
-// scenario dispatcher with dynamic parameters
+// real-time rendering & velocity visualizer for urban city and airfoil & mark solids for visualation
 
 int main(void) {
-    FluidContext* ctx = fluid_create_context(256, 256, 0.016f, 0.1f, 1.0f, 0.001f, 20);
+    FluidContext* ctx = fluid_create_context(256, 256, 0.016f, 0.1f, 1.0f, 0.01f, 20);
     ScenarioParams p;
 
-    p.inlet_velocity = 1.0f;
-    p.obstacle_x = ctx->x / 4;
-    p.obstacle_y = ctx->y / 2;
-    p.obstacle_radius = 10;
+    // You can ovverride scenario parameters here
+    // p.inlet_velocity = 3.0f;
 
-    // Karman Vortex Street: Length Scale = Cylinder Diameter
-    // p.length_scale = 2.0f * p.obstacle_radius * ctx->dx;
-
-    // Lid-Driven Cavity: Length Scale = Domain Size
-    // p.length_scale = (float)ctx->x * ctx->dx;
-
-    // Airfoil: Length Scale = Chord Length
-    // p.chord_length = 20.0f;
-    // p.angle_of_attack = 10.0f;
-    // p.length_scale = p.chord_length;
-
-    // Urban City: Length Scale = Characteristic Building Size
-    p.length_scale = (float)ctx->x * 0.08f * ctx->dx;
-
-    p.target_omega = 0.0f; // 0 means auto-calculate
+    Scenario scenario = load_scenario(airfoil, ctx, &p);
 
     fluid_setup_physics(ctx, p);
 
@@ -49,14 +31,14 @@ int main(void) {
     clock_t start_time = clock();
 #endif // DBG
 
-    INIT_SCENARIO();
+    scenario.init(ctx, p);
 
     size_t steps_per_frame = 20;
     size_t num_frames = 200;
 
     for (size_t frame = 0; frame < num_frames; frame++) {
         for (size_t step = 0; step < steps_per_frame; step++) {
-            fluid_step(ctx, p);
+            fluid_step(ctx, p, scenario);
         }
         // Write To File.
 #ifdef DBG
@@ -78,7 +60,6 @@ int main(void) {
         mat_save(ctx->smoke, filename, ctx->x, ctx->y, ctx->y);
 #endif // DBG
     }
-
 
 #ifdef DBG
     clock_t end_time = clock();

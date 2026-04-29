@@ -7,9 +7,68 @@
 #include "utilities.h"
 #include "boundaries.h"
 
+Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) {
+    Scenario s;
+    
+    // Default for all scenarios
+    p->target_omega = 0.0f;
+
+    switch (type) {
+        case lid_driven:
+        p->inlet_velocity = 1.0f;
+        p->length_scale = (float)ctx->x * ctx->dx;
+
+        s.init = init_lid_driven;
+        s.apply_sources = apply_sources_lid_driven;
+        s.apply_boundaries = apply_boundaries_lid_driven;
+        break;
+
+        case karman_vortex:
+            p->inlet_velocity = 1.0f;
+            p->obstacle_x = ctx->x / 4.0f;
+            p->obstacle_y = ctx->y / 2.0f;
+            p->obstacle_radius = 10.0f;
+            p->length_scale = 2.0f * p->obstacle_radius * ctx->dx;
+
+            s.init = init_karman_vortex;
+            s.apply_sources = apply_sources_karman_vortex;
+            s.apply_boundaries = apply_boundaries_karman_vortex;
+            break;
+
+        case airfoil:
+            p->inlet_velocity = 2.0f;
+            p->chord_length = ctx->x * ctx->dx * 0.4f;
+            p->angle_of_attack = 0.0f;
+            p->length_scale = p->chord_length;
+
+            s.init = init_airfoil;
+            s.apply_sources = apply_sources_airfoil;
+            s.apply_boundaries = apply_boundaries_airfoil;
+            break;
+
+        case urban_city:
+            p->inlet_velocity = 1.5f;
+            p->length_scale = (float)ctx->x * 0.08f * ctx->dx;
+
+            s.init = init_urban_city;
+            s.apply_sources = apply_sources_urban_city;
+            s.apply_boundaries = apply_boundaries_urban_city;
+            break;
+
+        default:
+            // Fallback to lid-driven if unknown type
+            p->length_scale = (float)ctx->x * ctx->dx;
+
+            s.init = init_lid_driven;
+            s.apply_sources = apply_sources_lid_driven;
+            s.apply_boundaries = apply_boundaries_lid_driven;
+    }
+    return s;
+}
+
 // Lid-Driven Cavity Flow
 
-void init_lid_driven(FluidContext* ctx) {
+void init_lid_driven(FluidContext* ctx, ScenarioParams p) {
     // Build fully enclosed solid boundaries
     bound_build_outer_walls(ctx, 1, 1, 1, 1);
 
@@ -23,7 +82,7 @@ void init_lid_driven(FluidContext* ctx) {
     }
 }
 
-void apply_sources_lid_driven(FluidContext* ctx) {
+void apply_sources_lid_driven(FluidContext* ctx, ScenarioParams p) {
     // Add smoke source at the bottom center
     for (size_t i = 3; i < ctx->x - 3; i++) {
         ctx->smoke[IX(ctx, i, ctx->y - 3)] = 1.0f;
@@ -68,7 +127,7 @@ void init_karman_vortex(FluidContext* ctx, ScenarioParams p) {
     }
 }
 
-void apply_sources_karman_vortex(FluidContext* ctx) {
+void apply_sources_karman_vortex(FluidContext* ctx, ScenarioParams p) {
     // Constant smoke injection behind the inlet
     for (size_t j = 1; j < ctx->y - 1; j++) {
         if (j > (ctx->y / 2 - 2) && j < (ctx->y / 2 + 2)) {
@@ -148,7 +207,7 @@ void apply_sources_airfoil(FluidContext* ctx, ScenarioParams p) {
 
 void apply_boundaries_airfoil(FluidContext* ctx, ScenarioParams p) {
     size_t center_j = ctx->y / 2;
-    size_t smoke_band_radius = ctx->y / 32;
+    size_t smoke_band_radius = ctx->y / 64;
 
     bound_apply_inlet_left(ctx, p.inlet_velocity, 1.0f, center_j - smoke_band_radius, center_j + smoke_band_radius);
     bound_apply_outlet_right(ctx);

@@ -7,6 +7,8 @@
 #include <stdint.h>
 #include <time.h>
 
+#define PI 3.14159265358979323846f
+
 #define IX(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
 #define IX_U(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
 #define IX_V(ctx, i, j) ((size_t)(i) * ((ctx)->y + 1) + (size_t)(j))
