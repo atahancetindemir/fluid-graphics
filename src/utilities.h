@@ -7,6 +7,27 @@
 #include <stdint.h>
 #include <time.h>
 
+#ifndef INLINE
+    #if defined(__GNUC__) || defined(__clang__)
+        // GCC & Clang
+        #define INLINE static inline __attribute__((always_inline))
+    #elif defined(_MSC_VER)
+        // MSVC
+        #define INLINE __forceinline
+    #else
+        // Fallback to C99
+        #define INLINE static inline
+    #endif
+#endif
+
+#ifdef _OPENMP
+    #include <omp.h>
+    #define GET_TIME_SEC() (omp_get_wtime())
+#else
+    #include <time.h>
+    #define GET_TIME_SEC() ((double)clock() / CLOCKS_PER_SEC)
+#endif // _OPENMP
+
 #define PI 3.14159265358979323846f
 
 #define IX(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))

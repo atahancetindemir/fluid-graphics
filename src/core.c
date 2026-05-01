@@ -61,6 +61,46 @@ Y
 +--------------------------+--------------------------+--------------------------+
 */
 
+// Fetch neighbors with Neumann BC handling for pressure solver
+static inline void fetch_neumann_neighbors(const FluidContext* ctx, const float* p, size_t i, size_t j, float* p_left, float* p_right, float* p_bottom, float* p_top) {
+    float p_center = p[IX(ctx, i, j)];
+
+    *p_left   = ctx->solid[IX(ctx, i - 1, j)] ? p_center : p[IX(ctx, i - 1, j)];
+    *p_right  = ctx->solid[IX(ctx, i + 1, j)] ? p_center : p[IX(ctx, i + 1, j)];
+    *p_bottom = ctx->solid[IX(ctx, i, j - 1)] ? p_center : p[IX(ctx, i, j - 1)];
+    *p_top    = ctx->solid[IX(ctx, i, j + 1)] ? p_center : p[IX(ctx, i, j + 1)];
+}
+
+// 5-point stencil application for Poisson equation with Neumann BCs
+static inline float compute_poisson_update(const FluidContext* ctx, const float* p, const float* div, float cp, size_t i, size_t j) {
+    float p_left, p_right, p_bottom, p_top;
+    fetch_neumann_neighbors(ctx, p, i, j, &p_left, &p_right, &p_bottom, &p_top);
+    return (p_left + p_right + p_bottom + p_top - div[IX(ctx, i, j)] * cp) * 0.25f;
+}
+
+// Calculate algebraic residual (b - Ax) for a single cell.
+static inline float compute_cell_residual(const FluidContext* ctx, const float* p, const float* div, float cp, size_t i, size_t j) {
+    float p_left, p_right, p_bottom, p_top;
+    fetch_neumann_neighbors(ctx, p, i, j, &p_left, &p_right, &p_bottom, &p_top);
+    return (p_left + p_right + p_bottom + p_top - 4.0f * p[IX(ctx, i, j)]) - div[IX(ctx, i, j)] * cp;
+}
+
+float calculate_max_residual(const FluidContext* ctx, const float* p, const float* div) {
+    float max_res = 0.0f;
+    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
+
+    #pragma omp parallel for reduction(max:max_res)
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
+            if (ctx->solid[IX(ctx, i, j)]) continue;
+
+            float residual = fabsf(compute_cell_residual(ctx, p, div, cp, i, j));
+            max_res = MAX(max_res, residual);
+        }
+    }
+    return max_res;
+}
+
 void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src) {
 
     mat_cpy(u_dest, (float*)u_src, ctx->x + 1, ctx->y);
@@ -143,6 +183,7 @@ void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
 
 void advect_scalar(FluidContext* ctx, float* dest, const float* src, float* u, float* v) {
 
+    #pragma omp parallel for schedule(static)
     for (size_t i = 1; i < ctx->x - 1; i++) {
         for (size_t j = 1; j < ctx->y - 1; j++) {
 
@@ -188,6 +229,7 @@ void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const floa
 
     // u (horizontal) velocity update
     // u vectors are located on the vertical edges. Position: (i, j + 0.5)
+    #pragma omp parallel for schedule(static)
     for (size_t i = 1; i < ctx->x; i++) {
         for (size_t j = 1; j < ctx->y - 1; j++) {
 
@@ -230,6 +272,7 @@ void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const floa
 
     // v (vertical) velocity update
     // v vectors are located on the horizontal edges. Position: (i + 0.5, j)
+    #pragma omp parallel for schedule(static)
     for (size_t i = 1; i < ctx->x - 1; i++) {
         for (size_t j = 1; j < ctx->y; j++) {
 
@@ -274,6 +317,7 @@ void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const floa
 void compute_divergence(FluidContext* ctx, float* u, float* v) {
     float inv_dx = 1.0f / ctx->dx;
 
+    #pragma omp parallel for schedule(static)
     for (size_t i = 1; i < ctx->x - 1; i++) {
         for (size_t j = 1; j < ctx->y - 1; j++) {
             if (ctx->solid[IX(ctx, i ,j)]) {
@@ -288,56 +332,12 @@ void compute_divergence(FluidContext* ctx, float* u, float* v) {
     }
 }
 
-void solve_pressure_rbgs(FluidContext* ctx, float* p, float* div) {
-
-}
-
-void solve_pressure_sor(FluidContext* ctx, float* p, float* div) {
-    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
-
-    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
-#ifdef VALIDATE
-        float max_error = 0.0f;
-#endif // VALIDATE
-        for (size_t i = 1; i < ctx->x - 1; i++) {
-            for (size_t j = 1; j < ctx->y - 1; j++) {
-                if (ctx->solid[IX(ctx, i, j)]) continue;
-
-                // P = (Left + Right + Bottom + Top - Divergence * cp) / 4
-                // If the neighbor is solid, we use the current cell's pressure for that neighbor (Neumann boundary condition).
-
-                float p_left = ctx->solid[IX(ctx, i - 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i - 1, j)];
-                float p_right = ctx->solid[IX(ctx, i + 1, j)] ? p[IX(ctx, i, j)] : p[IX(ctx, i + 1, j)];
-                float p_bottom = ctx->solid[IX(ctx, i, j - 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j - 1)];
-                float p_top = ctx->solid[IX(ctx, i, j + 1)] ? p[IX(ctx, i, j)] : p[IX(ctx, i, j + 1)];
-
-                float p_new = (p_left + p_right + p_bottom + p_top - div[IX(ctx, i, j)] * cp) * 0.25f;
-                float p_old = p[IX(ctx, i, j)];
-
-                p[IX(ctx, i, j)] = (1.0f - ctx->omega) * p_old + ctx->omega * p_new; // SOR update
-#ifdef VALIDATE
-                max_error = MAX(max_error, fabsf(p[IX(ctx, i, j)] - p_old));
-#endif // VALIDATE
-                
-            }
-        }
-#ifdef VALIDATE
-        if (max_error < 1e-4f) {
-            printf("Pressure solver converged in %zu iterations with max error %.6f\n", iter + 1, max_error);
-            break; // Convergence check
-        }
-        if (iter == ctx->iter_count - 1) {
-            printf("Pressure solver reached max iterations with max error %.6f\n", max_error);
-        }
-#endif // VALIDATE
-    }
-}
-
 void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
     float scale = ctx->dt / (ctx->dens * ctx->dx);
 
     // Horizontal velocity correction
     // i=1 (Left) to i=X-1 (Right)
+    #pragma omp parallel for schedule(static)
     for (size_t i = 1; i < ctx->x; i++) {
         for (size_t j = 1; j < ctx->y - 1; j++) {
             if (ctx->solid[IX(ctx, i - 1, j)] || ctx->solid[IX(ctx, i, j)])
@@ -348,6 +348,7 @@ void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
 
     // Vertical velocity correction
     // j=1 (Bottom) to j=Y-1 (Top)
+    #pragma omp parallel for schedule(static)
     for (size_t i = 1; i < ctx->x - 1; i++) {
         for (size_t j = 1; j < ctx->y; j++) {
             if (ctx->solid[IX(ctx, i, j - 1)] || ctx->solid[IX(ctx, i, j)])
@@ -357,7 +358,122 @@ void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
     }
 }
 
-FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters) {
+// Stride-2 access wastes 50% of every cache line
+// The stride-1 + branch version was considered but performs the same since
+// compute_poisson_update is a gather (4 neighbor reads), GCC won't vectorize
+// either way without manual AVX2 intrinsics.
+// If contigous red/black arrays ever get implemented, revisit this alongside SIMD.
+
+void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
+    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
+
+#ifdef VALIDATE
+    double start_time = GET_TIME_SEC();
+#endif // VALIDATE
+
+    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
+        // Red pass - no error tracking needed here
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            size_t j_start = (i % 2 != 0) ? 1 : 2;
+            for (size_t j = j_start; j < ctx->y - 1; j += 2) {
+                if (ctx->solid[IX(ctx, i, j)]) continue;
+
+                float p_new = compute_poisson_update(ctx, p, div, cp, i, j);
+                p[IX(ctx, i, j)] = p[IX(ctx, i, j)] * (1.0f - ctx->omega) + p_new * ctx->omega;
+            }
+        }
+
+        // Black pass - track error with OMP reduction
+        float max_error = 0.0f;
+        #pragma omp parallel for schedule(static) reduction(max:max_error)
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            size_t j_start = (i % 2 != 0) ? 2 : 1;
+            for (size_t j = j_start; j < ctx->y - 1; j += 2) {
+                if (ctx->solid[IX(ctx, i, j)]) continue;
+
+                float p_old = p[IX(ctx, i, j)];
+                float p_new = compute_poisson_update(ctx, p, div, cp, i, j);
+                float p_updated = p_old * (1.0f - ctx->omega) + p_new * ctx->omega;
+
+                p[IX(ctx, i, j)] = p_updated;
+                max_error = MAX(max_error, fabsf(p_updated - p_old));
+            }
+        }
+
+        if (max_error < ctx->threshold) {
+#ifdef VALIDATE
+            double end_time = GET_TIME_SEC();
+
+            float true_residual = calculate_max_residual(ctx, p, div);
+            double elapsed_ms = (end_time - start_time) * 1000.0;
+            
+            printf("[RBGS] Converged in %zu iters | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", iter + 1, max_error, true_residual, elapsed_ms);
+#endif // VALIDATE
+            break; // Convergence check
+        }
+#ifdef VALIDATE
+        // Max Iteration Check
+        if (iter == ctx->iter_count - 1) {
+            double end_time = GET_TIME_SEC();
+            
+            float true_residual = calculate_max_residual(ctx, p, div);
+            double elapsed_ms = (end_time - start_time) * 1000.0;
+            
+            printf("[RBGS] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->iter_count, max_error, true_residual, elapsed_ms);
+        }
+#endif // VALIDATE
+    }
+}
+
+void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
+    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
+
+#ifdef VALIDATE
+    double start_time = GET_TIME_SEC();
+#endif // VALIDATE
+
+    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
+        float max_error = 0.0f;
+
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            for (size_t j = 1; j < ctx->y - 1; j++) {
+                if (ctx->solid[IX(ctx, i, j)]) continue;
+
+                float p_new = compute_poisson_update(ctx, p, div, cp, i, j);
+                float p_old = p[IX(ctx, i, j)];
+
+                p[IX(ctx, i, j)] = (1.0f - ctx->omega) * p_old + ctx->omega * p_new;
+                max_error = MAX(max_error, fabsf(p[IX(ctx, i, j)] - p_old));
+            }
+        }
+
+        if (max_error < ctx->threshold) {
+#ifdef VALIDATE
+            double end_time = GET_TIME_SEC();
+            
+            float true_residual = calculate_max_residual(ctx, p, div);
+            double elapsed_ms = (end_time - start_time) * 1000.0;
+            
+            printf("[SOR] Converged in %zu iters | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", iter + 1, max_error, true_residual, elapsed_ms);
+#endif // VALIDATE
+            break; // Convergence check
+        }
+#ifdef VALIDATE
+        // Max Iteration Check
+        if (iter == ctx->iter_count - 1) {
+            double end_time = GET_TIME_SEC();
+            
+            float true_residual = calculate_max_residual(ctx, p, div);
+            double elapsed_ms = (end_time - start_time) * 1000.0;
+            
+            printf("[SOR] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->iter_count, max_error, true_residual, elapsed_ms);
+        }
+#endif
+    }
+}
+
+FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters, float threshold) {
     FluidContext* ctx = (FluidContext*)malloc(sizeof(FluidContext));
     
     ctx->x = res_x;
@@ -369,6 +485,7 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float d
     ctx->dens= dens;
     ctx->visc = visc;
     ctx->iter_count = iters;
+    ctx->threshold = threshold;
 
     ctx->u = (float*)calloc((res_x + 1) * res_y, sizeof(float));
     ctx->v = (float*)calloc(res_x * (res_y + 1), sizeof(float));
@@ -381,10 +498,17 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float d
     ctx->v_prev = (float*)calloc(res_x * (res_y + 1), sizeof(float));
     ctx->smoke_prev = (float*)calloc(ctx->num_cells, sizeof(float));
 
+    size_t N = ctx->x * ctx->y;
+    ctx->cg_r = aligned_alloc(64, N * sizeof(float));
+    ctx->cg_d = aligned_alloc(64, N * sizeof(float));
+    ctx->cg_q = aligned_alloc(64, N * sizeof(float));
+
     return ctx;
 }
 
-void fluid_setup_physics(FluidContext* ctx, ScenarioParams p) {
+void fluid_setup_physics(FluidContext* ctx, ScenarioParams p, PressureSolver pressure_solver) {
+    ctx->pressure_solver = pressure_solver;
+
     // Calculate reynolds
     if (ctx->visc > 0.0f) { // avoid zero-divison
         ctx->reynolds = (ctx->dens * p.inlet_velocity * p.length_scale ) / ctx->visc;
@@ -394,13 +518,13 @@ void fluid_setup_physics(FluidContext* ctx, ScenarioParams p) {
 
     // Find optimum omega for different scenarios
     if (p.target_omega <= 0.0f) {
-        ctx->omega = 2.0f / (1.0f + sinf(PI / (float)ctx->x)); 
+        ctx->omega = 2.0f / (1.0f + sinf(PI / (float)ctx->x));
     } else {
         ctx->omega = p.target_omega;
     }
 
-    if (ctx->omega >= 2.0f) {
-        ctx->omega = 1.85f; // Clamp for upperbound
+    if (ctx->omega >= 1.99f) {
+        ctx->omega = 1.99f; // Clamp for upperbound
     } else if (ctx->omega < 1.0f) {
         ctx->omega = 1.0f;  // Back to gauss-seidel
     }
@@ -418,6 +542,10 @@ void fluid_destroy_context(FluidContext* ctx) {
     free(ctx->v_prev);
     free(ctx->smoke_prev);
     free(ctx);
+
+    free(ctx->cg_r);
+    free(ctx->cg_d);
+    free(ctx->cg_q);
 }
 
 void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
@@ -450,7 +578,7 @@ void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
     
     // Pressure Solve
 
-    solve_pressure_sor(ctx, ctx->p, ctx->div);
+    ctx->pressure_solver(ctx, ctx->p, ctx->div);
     
     // Gradient Subtraction
     subtract_gradient(ctx, ctx->u, ctx->v, ctx->p);
