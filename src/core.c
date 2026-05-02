@@ -7,6 +7,7 @@
 #include <math.h>
 
 #include "types.h"
+#include "preconditioners.h"
 #include "utilities.h"
 #include "scenarios.h"
 
@@ -61,30 +62,6 @@ Y
 +--------------------------+--------------------------+--------------------------+
 */
 
-// Fetch neighbors with Neumann BC handling for pressure solver
-static inline void fetch_neumann_neighbors(const FluidContext* ctx, const float* p, size_t i, size_t j, float* p_left, float* p_right, float* p_bottom, float* p_top) {
-    float p_center = p[IX(ctx, i, j)];
-
-    *p_left   = ctx->solid[IX(ctx, i - 1, j)] ? p_center : p[IX(ctx, i - 1, j)];
-    *p_right  = ctx->solid[IX(ctx, i + 1, j)] ? p_center : p[IX(ctx, i + 1, j)];
-    *p_bottom = ctx->solid[IX(ctx, i, j - 1)] ? p_center : p[IX(ctx, i, j - 1)];
-    *p_top    = ctx->solid[IX(ctx, i, j + 1)] ? p_center : p[IX(ctx, i, j + 1)];
-}
-
-// 5-point stencil application for Poisson equation with Neumann BCs
-static inline float compute_poisson_update(const FluidContext* ctx, const float* p, const float* div, float cp, size_t i, size_t j) {
-    float p_left, p_right, p_bottom, p_top;
-    fetch_neumann_neighbors(ctx, p, i, j, &p_left, &p_right, &p_bottom, &p_top);
-    return (p_left + p_right + p_bottom + p_top - div[IX(ctx, i, j)] * cp) * 0.25f;
-}
-
-// Calculate algebraic residual (b - Ax) for a single cell.
-static inline float compute_cell_residual(const FluidContext* ctx, const float* p, const float* div, float cp, size_t i, size_t j) {
-    float p_left, p_right, p_bottom, p_top;
-    fetch_neumann_neighbors(ctx, p, i, j, &p_left, &p_right, &p_bottom, &p_top);
-    return (p_left + p_right + p_bottom + p_top - 4.0f * p[IX(ctx, i, j)]) - div[IX(ctx, i, j)] * cp;
-}
-
 float calculate_max_residual(const FluidContext* ctx, const float* p, const float* div) {
     float max_res = 0.0f;
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
@@ -102,81 +79,66 @@ float calculate_max_residual(const FluidContext* ctx, const float* p, const floa
 }
 
 void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src) {
-
-    mat_cpy(u_dest, (float*)u_src, ctx->x + 1, ctx->y);
-    mat_cpy(v_dest, (float*)v_src, ctx->x, ctx->y + 1);
-
     float kinematic_visc = ctx->visc / ctx->dens;
-
-    // Friction coefficient
     float a = ctx->dt * kinematic_visc / (ctx->dx * ctx->dx);
 
-    // Gauss-Seidel iteration for diffusion
-    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
-        // u (horizontal) velocity diffusion
-        for (size_t i = 1; i < ctx->x; i++) {
-            for (size_t j = 1; j < ctx->y - 1; j++) {
-                // Skip solid boundaries
-                // Dirichlet boundary condition at solids: u = 0. This means that the velocity at the solid boundary is zero,
-                // and we can use this to compute the diffusion for the neighboring fluid cells.
-                if (ctx->solid[IX(ctx, i - 1, j)] || ctx->solid[IX(ctx, i, j)]) {
-                    continue;
-                }
-                // Fetch neighboring velocities (with no-slip condition at solids)
-                float u_left = u_dest[IX_U(ctx, i - 1, j)];
-                float u_right = u_dest[IX_U(ctx, i + 1, j)];
-                float u_bottom = u_dest[IX_U(ctx, i, j - 1)];
-                float u_top = u_dest[IX_U(ctx, i, j + 1)];
+    // Stability check explicit diffusion requires a < 0.25 not enforced here
 
-                // Update u using the diffusion formula derived from the discretized diffusion equation.
-                u_dest[IX_U(ctx, i, j)] = (u_src[IX_U(ctx, i, j)] + a * (u_left + u_right + u_bottom + u_top)) / (1.0f + 4.0f * a);
+    // u diffusion
+    #pragma omp parallel for schedule(static)
+    for (size_t i = 1; i < ctx->x; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
+            if (ctx->solid[IX(ctx, i-1, j)] || ctx->solid[IX(ctx, i, j)]) {
+                u_dest[IX_U(ctx, i, j)] = 0.0f;
+                continue;
             }
+            float u_left = u_src[IX_U(ctx, i-1, j)];
+            float u_right = u_src[IX_U(ctx, i+1, j)];
+            float u_bottom = u_src[IX_U(ctx, i, j-1)];
+            float u_top = u_src[IX_U(ctx, i, j+1)];
+            float u_center = u_src[IX_U(ctx, i, j)];
+
+            u_dest[IX_U(ctx, i, j)] = u_center + a * (u_left + u_right + u_bottom + u_top - 4.0f * u_center);
         }
+    }
 
-        // v (vertical) velocity diffusion
-        for (size_t i = 1; i < ctx->x - 1; i++) {
-            for (size_t j = 1; j < ctx->y; j++) {
-                if (ctx->solid[IX(ctx, i, j - 1)] || ctx->solid[IX(ctx, i, j)]) {
-                    continue;
-                }
-                
-                float v_bottom = v_dest[IX_V(ctx, i, j - 1)];
-                float v_top = v_dest[IX_V(ctx, i, j + 1)];
-                float v_left = v_dest[IX_V(ctx, i - 1, j)];
-                float v_right = v_dest[IX_V(ctx, i + 1, j)];
-
-                v_dest[IX_V(ctx, i, j)] = (v_src[IX_V(ctx, i, j)] + a * (v_bottom + v_top + v_left + v_right)) / (1.0f + 4.0f * a);
+    // v diffusion
+    #pragma omp parallel for schedule(static)
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y; j++) {
+            if (ctx->solid[IX(ctx, i, j-1)] || ctx->solid[IX(ctx, i, j)]) {
+                v_dest[IX_V(ctx, i, j)] = 0.0f;
+                continue;
             }
+            float v_bottom = v_src[IX_V(ctx, i, j-1)];
+            float v_top = v_src[IX_V(ctx, i, j+1)];
+            float v_left = v_src[IX_V(ctx, i-1, j)];
+            float v_right = v_src[IX_V(ctx, i+1, j)];
+            float v_center = v_src[IX_V(ctx, i, j)];
+
+            v_dest[IX_V(ctx, i, j)] = v_center + a * (v_bottom + v_top + v_left + v_right - 4.0f * v_center);
         }
     }
 }
 
 void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
-
-    mat_cpy(dest, (float*)src, ctx->x, ctx->y);
-
     float kinematic_visc = ctx->visc / ctx->dens;
-    
-    // Friction coefficient
     float a = ctx->dt * kinematic_visc / (ctx->dx * ctx->dx);
 
-    // Gauss-Seidel iteration for diffusion
-    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
-        for (size_t i = 1; i < ctx->x - 1; i++) {
-            for (size_t j = 1; j < ctx->y - 1; j++) {
-                // Skip solid boundaries
-                if (ctx->solid[IX(ctx, i, j)]) {
-                    continue;
-                }
-                // Fetch neighboring velocities (with no-slip condition at solids)
-                float left = dest[IX(ctx, i - 1, j)];
-                float right = dest[IX(ctx, i + 1, j)];
-                float bottom = dest[IX(ctx, i, j - 1)];
-                float top = dest[IX(ctx, i, j + 1)];
-
-                // Update u using the diffusion formula derived from the discretized diffusion equation.
-                dest[IX(ctx, i, j)] = (src[IX(ctx, i, j)] + a * (left + right + bottom + top)) / (1.0f + 4.0f * a);
+    #pragma omp parallel for schedule(static)
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
+            if (ctx->solid[IX(ctx, i, j)]) {
+                dest[IX(ctx, i, j)] = 0.0f;
+                continue;
             }
+            float center = src[IX(ctx, i, j)];
+            float left = src[IX(ctx, i-1, j)];
+            float right = src[IX(ctx, i+1, j)];
+            float bottom = src[IX(ctx, i, j-1)];
+            float top = src[IX(ctx, i, j+1)];
+
+            dest[IX(ctx, i, j)] = center + a * (left + right + bottom + top - 4.0f * center);
         }
     }
 }
@@ -327,7 +289,6 @@ void compute_divergence(FluidContext* ctx, float* u, float* v) {
             // Divergence = Right - Left + Top - Bottom
             float divergence = (u[IX_U(ctx, i + 1, j)] - u[IX_U(ctx, i, j)] + v[IX_V(ctx, i, j + 1)] - v[IX_V(ctx, i, j)]) * inv_dx;
             ctx->div[IX(ctx, i, j)] = divergence;
-            ctx->p[IX(ctx, i, j)] = 0.0f;
         }
     }
 }
@@ -473,6 +434,128 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
     }
 }
 
+// Trying to optimize the RBGS memory layout will cause to change entire mapping,
+// so instead I decided to move to a better solver with the same layout and better convergence rate.
+// It performs more operations per iter, but the faster convergence and better true residual more than makes up for it. 
+//
+// RBGS: 650 iters, 27ms avg 0.86 FPS
+// CG : 308 iters, 45ms avg 0.84 FPS
+//
+// RBGS True Res: 2.05e-05
+// CG True Res: 8.3e-06 
+//
+// CG is delivering a more accurate solution for the same cost.
+
+
+// Nvm after update on the diffusion, results in benchmarking usually 2x faster for RBGS than CG (Also PCG with Jacobi).
+//
+// re:1280 lid driven 128x128 1e-5f 9999 itermax
+// sor
+// Simulated 1000 frames in 3.84 seconds (260.62 FPS)
+// rbgs
+// Simulated 1000 frames in 0.40 seconds (2479.79 FPS)
+// cg
+// Simulated 1000 frames in 1.05 seconds (956.48 FPS)
+// pcg
+// Simulated 1000 frames in 0.89 seconds (1118.98 FPS)
+// sor
+// Simulated 100 frames in 0.72 seconds (137.96 FPS)
+// rbgs
+// Simulated 100 frames in 0.15 seconds (687.29 FPS)
+// cg
+// Simulated 100 frames in 0.31 seconds (319.87 FPS)
+// pcg
+// Simulated 100 frames in 0.24 seconds (415.91 FPS) 
+//
+// Theoretically CG should be faster but i think the real bottleneck is the memory bandwidth here.
+// Since CG has more vector reads/writes per iter, it is more affected.
+
+void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
+    size_t N = ctx->num_cells;
+    float *r = ctx->cg_r;
+    float *d = ctx->cg_d;
+    float *q = ctx->cg_q;
+    float *z = ctx->cg_z;
+
+    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
+    float inv_cp = 1.0f / cp;
+
+#ifdef VALIDATE
+    double start_time = GET_TIME_SEC();
+#endif
+
+    #pragma omp parallel for schedule(static)
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
+            size_t idx = IX(ctx, i, j);
+            if (ctx->solid[idx]) {
+                r[idx] = 0.0f;
+                d[idx] = 0.0f;
+                continue;
+            }
+            float Ap = apply_laplacian(ctx, p, i, j);
+            r[idx] = div[idx] * cp - Ap;
+        }
+    }
+
+    ctx->precondition(ctx, z, r);
+    memcpy(d, z, N * sizeof(float));
+
+    float delta_new = dot(r, z, N);
+
+    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
+
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            for (size_t j = 1; j < ctx->y - 1; j++) {
+                size_t idx = IX(ctx, i, j);
+                if (ctx->solid[idx]) {
+                    q[idx] = 0.0f;
+                    continue;
+                }
+                q[idx] = apply_laplacian(ctx, d, i, j);
+            }
+        }
+
+        float alpha = delta_new / dot(d, q, N);
+
+        float max_change = 0.0f;
+        #pragma omp parallel for simd schedule(static) reduction(max:max_change)
+        for (size_t k = 0; k < N; k++) {
+            float change = alpha * d[k];
+            p[k] += change;
+            r[k] -= alpha * q[k];
+            max_change = MAX(max_change, fabsf(change));
+        }
+
+        if (max_change < ctx->threshold) {
+#ifdef VALIDATE
+            double end_time = GET_TIME_SEC();
+            float true_residual = calculate_max_residual(ctx, p, div);
+            printf("[PCG] Converged in %zu iters | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", iter + 1, max_change, true_residual, (end_time - start_time) * 1000.0);
+#endif
+            break;
+        }
+#ifdef VALIDATE
+        if (iter == ctx->iter_count - 1) {
+            double end_time = GET_TIME_SEC();
+            float true_residual = calculate_max_residual(ctx, p, div);
+            printf("[PCG] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->iter_count, max_change, true_residual, (end_time - start_time) * 1000.0);
+        }
+#endif
+
+        ctx->precondition(ctx, z, r);        
+
+        float delta_old = delta_new;
+        delta_new = dot(r, z, N);
+        float beta = delta_new / delta_old;
+
+        #pragma omp parallel for simd schedule(static)
+        for (size_t k = 0; k < N; k++)
+            d[k] = z[k] + beta * d[k];
+    }
+}
+
 FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters, float threshold) {
     FluidContext* ctx = (FluidContext*)malloc(sizeof(FluidContext));
     
@@ -498,16 +581,31 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float d
     ctx->v_prev = (float*)calloc(res_x * (res_y + 1), sizeof(float));
     ctx->smoke_prev = (float*)calloc(ctx->num_cells, sizeof(float));
 
-    size_t N = ctx->x * ctx->y;
-    ctx->cg_r = aligned_alloc(64, N * sizeof(float));
-    ctx->cg_d = aligned_alloc(64, N * sizeof(float));
-    ctx->cg_q = aligned_alloc(64, N * sizeof(float));
+    ctx->cg_r = (float*)calloc(ctx->num_cells, sizeof(float));
+    ctx->cg_d = (float*)calloc(ctx->num_cells, sizeof(float));
+    ctx->cg_q = (float*)calloc(ctx->num_cells, sizeof(float));
+    ctx->cg_z = (float*)calloc(ctx->num_cells, sizeof(float));
 
     return ctx;
 }
 
-void fluid_setup_physics(FluidContext* ctx, ScenarioParams p, PressureSolver pressure_solver) {
+void fluid_setup_physics(FluidContext* ctx, ScenarioParams p, PressureSolver pressure_solver, PrecondType precondition) {
     ctx->pressure_solver = pressure_solver;
+
+    switch (precondition) {
+        case PRECOND_IDENTITY:
+            ctx->precondition = precondition_identity;
+            break;
+        case PRECOND_JACOBI:
+            ctx->precondition = precondition_jacobi;
+            break;
+        case PRECOND_MULTIGRID:
+            ctx->precondition = precondition_multigrid;
+            break;
+        default: // fallback to identity
+            ctx->precondition = precondition_identity;
+            break;
+    }
 
     // Calculate reynolds
     if (ctx->visc > 0.0f) { // avoid zero-divison
@@ -537,15 +635,18 @@ void fluid_destroy_context(FluidContext* ctx) {
     free(ctx->p);
     free(ctx->div);
     free(ctx->smoke);
+
     free(ctx->solid);
     free(ctx->u_prev);
     free(ctx->v_prev);
     free(ctx->smoke_prev);
-    free(ctx);
 
     free(ctx->cg_r);
     free(ctx->cg_d);
     free(ctx->cg_q);
+    free(ctx->cg_z);
+
+    free(ctx);
 }
 
 void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {

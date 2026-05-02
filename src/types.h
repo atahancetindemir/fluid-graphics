@@ -6,6 +6,7 @@
 
 typedef struct FluidContext FluidContext;
 typedef void (*PressureSolver)(FluidContext* ctx, float* p, const float* div);
+typedef void (*Preconditioner)(FluidContext* ctx, float* z, const float* r);
 
 // Fluid Simulation Context
 struct FluidContext {
@@ -45,10 +46,11 @@ struct FluidContext {
     float* v_prev;                  // Previous vertical velocity
     float* smoke_prev;              // Previous smoke
 
+    Preconditioner precondition;    // Function pointer to the selected preconditioner
     float* cg_r;                    // Residual for Conjugate Gradient
     float* cg_d;                    // Direction for Conjugate Gradient
     float* cg_q;                    // Temporary vector for Conjugate Gradient
-
+    float* cg_z;                    // Preconditioner vector for Conjugate Gradient
 };
 
 typedef struct {

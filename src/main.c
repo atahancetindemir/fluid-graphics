@@ -5,38 +5,45 @@
 #include "utilities.h"
 #include "scenarios.h"
 #include "core.h"
-
-// Further optimizations
-// More efficient pressure solvers (e.g. conjugate gradient with multigrid (V-cycle)) for faster convergence.
+#include "preconditioners.h"
 
 // TODO:
-// real-time rendering & velocity visualizer for urban city and airfoil & mark solids for visualation
+// - Enforce a < 0.25 for diffusion or add fallback.
+// - Add more metrics for unbiased benchmarking
+//    - for SOR, RBGS(non-contiguous), CG, PCG(With Jacobi)
+//    - scenario: lid driven, warmup before,
+//    - 1: constant iter count, 2: max iter with 1e-5f
+//    - get total frame, time spent, fps, ms/solve?
+//    - re: 100 -> 128x128, 256x256, 512x512, 1024x1024, 2048x2048
+//    - re: 400 -> 128x128, 256x256, 512x512, 1024x1024, 2048x2048
+//    - re: 1000 -> 128x128, 256x256, 512x512, 1024x1024, 2048x2048
+//
 
 int main(void) {
-    FluidContext* ctx = fluid_create_context(128, 128, 0.016f, 0.1f, 1.0f, 0.1f, 9999, 0.00001f);
+    FluidContext* ctx = fluid_create_context(128, 128, 0.016f, 0.1f, 1.0f, 0.01f, 9999, 1e-5f);
     ScenarioParams p;
     
-    // You can ovverride scenario parameters here
-    // p.inlet_velocity = 3.0f;
-    
-    Scenario scenario = load_scenario(lid_driven, ctx, &p);
-
-    fluid_setup_physics(ctx, p, solve_pressure_rbgs);
+    Scenario scenario = load_scenario(LID_DRIVEN, ctx, &p);
+    fluid_setup_physics(ctx, p, solve_pressure_pcg, PRECOND_JACOBI);
 
 #ifdef VALIDATE
     printf("Reynolds Number: %.2f\n", ctx->reynolds);
     printf("Omega: %.4f\n", ctx->omega);
 #endif // VALIDATE
 
-#ifdef DBG
-    double start_time = GET_TIME_SEC();
-#endif // DBG
-
     scenario.init(ctx, p);
 
     size_t steps_per_frame = 1;
-    size_t num_frames = 10;
+    size_t num_frames = 100;
+    int warmup_frames = (int)((num_frames * steps_per_frame) / 20);
 
+#ifdef DBG
+    for (int f = 0; f < warmup_frames; f++) {
+        fluid_step(ctx, p, scenario);
+    }
+
+    double start_time = GET_TIME_SEC();
+#endif // DBG
     for (size_t frame = 0; frame < num_frames; frame++) {
         for (size_t step = 0; step < steps_per_frame; step++) {
             fluid_step(ctx, p, scenario);
@@ -61,6 +68,7 @@ int main(void) {
         mat_save(ctx->smoke, filename, ctx->x, ctx->y, ctx->y);
 #endif // OUTPUT
     }
+    
 
 #ifdef DBG
     double end_time = GET_TIME_SEC();

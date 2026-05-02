@@ -14,7 +14,7 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
     p->target_omega = 0.0f;
 
     switch (type) {
-        case lid_driven:
+        case LID_DRIVEN:
         p->inlet_velocity = 1.0f;
         p->length_scale = (float)ctx->x * ctx->dx;
 
@@ -23,7 +23,7 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
         s.apply_boundaries = apply_boundaries_lid_driven;
         break;
 
-        case karman_vortex:
+        case KARMAN_VORTEX:
             p->inlet_velocity = 1.0f;
             p->obstacle_x = ctx->x / 4.0f;
             p->obstacle_y = ctx->y / 2.0f;
@@ -35,7 +35,7 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
             s.apply_boundaries = apply_boundaries_karman_vortex;
             break;
 
-        case airfoil:
+        case AIRFOIL:
             p->inlet_velocity = 2.0f;
             p->chord_length = ctx->x * ctx->dx * 0.4f;
             p->angle_of_attack = 0.0f;
@@ -46,7 +46,7 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
             s.apply_boundaries = apply_boundaries_airfoil;
             break;
 
-        case urban_city:
+        case URBAN_CITY:
             p->inlet_velocity = 1.5f;
             p->length_scale = (float)ctx->x * 0.08f * ctx->dx;
 

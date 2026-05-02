@@ -4,10 +4,10 @@
 #include "types.h"
 
 typedef enum {
-    lid_driven,     // Classic lid-driven cavity flow
-    karman_vortex,  // Flow around a cylinder creating a von Karman vortex street
-    airfoil,        // Flow around a NACA 2412 airfoil at zero angle of attack
-    urban_city      // Flow in an urban city environment
+    LID_DRIVEN,     // Classic lid-driven cavity flow
+    KARMAN_VORTEX,  // Flow around a cylinder creating a von Karman vortex street
+    AIRFOIL,        // Flow around a NACA 2412 airfoil at zero angle of attack
+    URBAN_CITY      // Flow in an urban city environment
 } ScenarioType;
 
 // Interface
@@ -19,7 +19,7 @@ typedef struct {
 
 /**
  * @brief Loads a scenario based on the specified type and initializes the provided parameters.
- * @param type The type of scenario to load (e.g., lid_driven, karman_vortex, airfoil, urban_city).
+ * @param type The type of scenario to load (e.g., LID_DRIVEN, KARMAN_VORTEX, AIRFOIL, URBAN_CITY).
  * @param ctx Pointer to the fluid context, which may be used to set scenario-specific parameters
  * @param p Pointer to a ScenarioParams struct that will be populated with scenario-specific parameters such as inlet velocity, length scale, and obstacle geometry.
  * @return A Scenario struct containing function pointers for initialization, source application, and boundary condition application
