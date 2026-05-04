@@ -8,7 +8,6 @@
 #include "preconditioners.h"
 
 // TODO:
-// - Enforce a < 0.25 for diffusion or add fallback.
 // - Add more metrics for unbiased benchmarking
 //    - for SOR, RBGS(non-contiguous), CG, PCG(With Jacobi)
 //    - scenario: lid driven, warmup before,
@@ -20,12 +19,11 @@
 //
 
 int main(void) {
-    FluidContext* ctx = fluid_create_context(128, 128, 0.016f, 0.1f, 1.0f, 0.01f, 9999, 1e-5f);
+    FluidContext* ctx = fluid_create_context(128, 128, 0.016f, 0.1f, 1.0f, 1.0f, 9999, 1e-5f);
     ScenarioParams p;
     
     Scenario scenario = load_scenario(LID_DRIVEN, ctx, &p);
-    fluid_setup_physics(ctx, p, solve_pressure_pcg, PRECOND_JACOBI);
-
+    fluid_setup_physics(ctx, p, solve_pressure_rbgs, PRECOND_IDENTITY);
 #ifdef VALIDATE
     printf("Reynolds Number: %.2f\n", ctx->reynolds);
     printf("Omega: %.4f\n", ctx->omega);
@@ -33,7 +31,7 @@ int main(void) {
 
     scenario.init(ctx, p);
 
-    size_t steps_per_frame = 1;
+    size_t steps_per_frame = 20;
     size_t num_frames = 100;
     int warmup_frames = (int)((num_frames * steps_per_frame) / 20);
 

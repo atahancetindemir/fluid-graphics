@@ -23,7 +23,8 @@ struct FluidContext {
     float visc;                     // Dynamic viscosity of the fluid
     float reynolds;                 // Reynolds number
     float omega;                    // Over-relaxation factor for pressure solver
-    int iter_count;                 // Iteration count for solver
+    int poisson_iter;               // Iteration count for Poisson solver
+    int diffuse_iter;               // Iteration count for diffusion solver
     float threshold;                // Convergence threshold for iterative solvers
     PressureSolver pressure_solver; // Function pointer to the selected pressure solver
 

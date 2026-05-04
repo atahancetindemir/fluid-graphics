@@ -11,9 +11,21 @@
 float calculate_max_residual(const FluidContext* ctx, const float* p, const float* div);
 
 // Explicit diffusion of velocity field.
+void diffuse_velocity_explicit(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src, float a);
+
+// Implicit diffusion of velocity field.
+void diffuse_velocity_implicit(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src, float a);
+
+// Compute the diffusion coefficient and choose explicit or implicit velocity diffusion.
 void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src);
 
 // Explicit diffusion of scalar field.
+void diffuse_scalar_explicit(FluidContext* ctx, float* dest, const float* src, float a);
+
+// Implicit diffusion of scalar field.
+void diffuse_scalar_implicit(FluidContext* ctx, float* dest, const float* src, float a);
+
+// Compute the diffusion coefficient and choose explicit or implicit scalar diffusion.
 void diffuse_scalar(FluidContext* ctx, float* dest, const float* src);
 
 // Advect the scalar field with given velocities using semi-Lagrangian advection.

@@ -78,11 +78,7 @@ float calculate_max_residual(const FluidContext* ctx, const float* p, const floa
     return max_res;
 }
 
-void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src) {
-    float kinematic_visc = ctx->visc / ctx->dens;
-    float a = ctx->dt * kinematic_visc / (ctx->dx * ctx->dx);
-
-    // Stability check explicit diffusion requires a < 0.25 not enforced here
+void diffuse_velocity_explicit(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src, float a) {
 
     // u diffusion
     #pragma omp parallel for schedule(static)
@@ -121,9 +117,78 @@ void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const flo
     }
 }
 
-void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
+void diffuse_velocity_implicit(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src, float a) {
+
+    mat_cpy(u_dest, (float*)u_src, ctx->x + 1, ctx->y);
+    mat_cpy(v_dest, (float*)v_src, ctx->x, ctx->y + 1);
+
+    #pragma omp parallel for schedule(static)
+    for (size_t iter = 0; iter < ctx->diffuse_iter; iter++) {
+        // u (horizontal) velocity diffusion
+        for (size_t i = 1; i < ctx->x; i++) {
+            for (size_t j = 1; j < ctx->y - 1; j++) {
+                if (ctx->solid[IX(ctx, i - 1, j)] || ctx->solid[IX(ctx, i, j)]) {
+                    continue;
+                }
+                
+                float u_left = u_dest[IX_U(ctx, i - 1, j)];
+                float u_right = u_dest[IX_U(ctx, i + 1, j)];
+                float u_bottom = u_dest[IX_U(ctx, i, j - 1)];
+                float u_top = u_dest[IX_U(ctx, i, j + 1)];
+
+                u_dest[IX_U(ctx, i, j)] = (u_src[IX_U(ctx, i, j)] + a * (u_left + u_right + u_bottom + u_top)) / (1.0f + 4.0f * a);
+            }
+        }
+
+        // v (vertical) velocity diffusion
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            for (size_t j = 1; j < ctx->y; j++) {
+                if (ctx->solid[IX(ctx, i, j - 1)] || ctx->solid[IX(ctx, i, j)]) {
+                    continue;
+                }
+
+                float v_bottom = v_dest[IX_V(ctx, i, j - 1)];
+                float v_top = v_dest[IX_V(ctx, i, j + 1)];
+                float v_left = v_dest[IX_V(ctx, i - 1, j)];
+                float v_right = v_dest[IX_V(ctx, i + 1, j)];
+
+                v_dest[IX_V(ctx, i, j)] = (v_src[IX_V(ctx, i, j)] + a * (v_bottom + v_top + v_left + v_right)) / (1.0f + 4.0f * a);
+            }
+        }
+    }
+}
+
+void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src) {
     float kinematic_visc = ctx->visc / ctx->dens;
     float a = ctx->dt * kinematic_visc / (ctx->dx * ctx->dx);
+
+    a < 0.25 ? diffuse_velocity_explicit(ctx, u_dest, v_dest, u_src, v_src, a) : diffuse_velocity_implicit(ctx, u_dest, v_dest, u_src, v_src, a);
+}
+
+void diffuse_scalar_implicit(FluidContext* ctx, float* dest, const float* src, float a) {
+
+    mat_cpy(dest, (float*)src, ctx->x, ctx->y);
+
+    #pragma omp parallel for schedule(static)
+    for (size_t iter = 0; iter < ctx->diffuse_iter; iter++) {
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            for (size_t j = 1; j < ctx->y - 1; j++) {
+                if (ctx->solid[IX(ctx, i, j)]) {
+                    continue;
+                }
+                
+                float left = dest[IX(ctx, i - 1, j)];
+                float right = dest[IX(ctx, i + 1, j)];
+                float bottom = dest[IX(ctx, i, j - 1)];
+                float top = dest[IX(ctx, i, j + 1)];
+
+                dest[IX(ctx, i, j)] = (src[IX(ctx, i, j)] + a * (left + right + bottom + top)) / (1.0f + 4.0f * a);
+            }
+        }
+    }
+}
+
+void diffuse_scalar_explicit(FluidContext* ctx, float* dest, const float* src, float a) {
 
     #pragma omp parallel for schedule(static)
     for (size_t i = 1; i < ctx->x - 1; i++) {
@@ -141,6 +206,13 @@ void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
             dest[IX(ctx, i, j)] = center + a * (left + right + bottom + top - 4.0f * center);
         }
     }
+}
+
+void diffuse_scalar(FluidContext* ctx, float* dest, const float* src) {
+    float kinematic_visc = ctx->visc / ctx->dens;
+    float a = ctx->dt * kinematic_visc / (ctx->dx * ctx->dx);
+
+    a < 0.25 ? diffuse_scalar_explicit(ctx, dest, src, a) : diffuse_scalar_implicit(ctx, dest, src, a);
 }
 
 void advect_scalar(FluidContext* ctx, float* dest, const float* src, float* u, float* v) {
@@ -332,7 +404,7 @@ void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
     double start_time = GET_TIME_SEC();
 #endif // VALIDATE
 
-    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
+    for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
         // Red pass - no error tracking needed here
         #pragma omp parallel for schedule(static)
         for (size_t i = 1; i < ctx->x - 1; i++) {
@@ -375,13 +447,13 @@ void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
         }
 #ifdef VALIDATE
         // Max Iteration Check
-        if (iter == ctx->iter_count - 1) {
+        if (iter == ctx->poisson_iter - 1) {
             double end_time = GET_TIME_SEC();
             
             float true_residual = calculate_max_residual(ctx, p, div);
             double elapsed_ms = (end_time - start_time) * 1000.0;
             
-            printf("[RBGS] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->iter_count, max_error, true_residual, elapsed_ms);
+            printf("[RBGS] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->poisson_iter, max_error, true_residual, elapsed_ms);
         }
 #endif // VALIDATE
     }
@@ -394,7 +466,7 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
     double start_time = GET_TIME_SEC();
 #endif // VALIDATE
 
-    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
+    for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
         float max_error = 0.0f;
 
         for (size_t i = 1; i < ctx->x - 1; i++) {
@@ -422,13 +494,13 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
         }
 #ifdef VALIDATE
         // Max Iteration Check
-        if (iter == ctx->iter_count - 1) {
+        if (iter == ctx->poisson_iter - 1) {
             double end_time = GET_TIME_SEC();
             
             float true_residual = calculate_max_residual(ctx, p, div);
             double elapsed_ms = (end_time - start_time) * 1000.0;
             
-            printf("[SOR] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->iter_count, max_error, true_residual, elapsed_ms);
+            printf("[SOR] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->poisson_iter, max_error, true_residual, elapsed_ms);
         }
 #endif
     }
@@ -503,7 +575,7 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
 
     float delta_new = dot(r, z, N);
 
-    for (size_t iter = 0; iter < ctx->iter_count; iter++) {
+    for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
 
         #pragma omp parallel for schedule(static)
         for (size_t i = 1; i < ctx->x - 1; i++) {
@@ -537,10 +609,10 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
             break;
         }
 #ifdef VALIDATE
-        if (iter == ctx->iter_count - 1) {
+        if (iter == ctx->poisson_iter - 1) {
             double end_time = GET_TIME_SEC();
             float true_residual = calculate_max_residual(ctx, p, div);
-            printf("[PCG] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->iter_count, max_change, true_residual, (end_time - start_time) * 1000.0);
+            printf("[PCG] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->poisson_iter, max_change, true_residual, (end_time - start_time) * 1000.0);
         }
 #endif
 
@@ -567,7 +639,8 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float d
     ctx->dx = dx;
     ctx->dens= dens;
     ctx->visc = visc;
-    ctx->iter_count = iters;
+    ctx->poisson_iter = iters;
+    ctx->diffuse_iter = 20;
     ctx->threshold = threshold;
 
     ctx->u = (float*)calloc((res_x + 1) * res_y, sizeof(float));
