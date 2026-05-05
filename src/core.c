@@ -88,13 +88,7 @@ void diffuse_velocity_explicit(FluidContext* ctx, float* u_dest, float* v_dest, 
                 u_dest[IX_U(ctx, i, j)] = 0.0f;
                 continue;
             }
-            float u_left = u_src[IX_U(ctx, i-1, j)];
-            float u_right = u_src[IX_U(ctx, i+1, j)];
-            float u_bottom = u_src[IX_U(ctx, i, j-1)];
-            float u_top = u_src[IX_U(ctx, i, j+1)];
-            float u_center = u_src[IX_U(ctx, i, j)];
-
-            u_dest[IX_U(ctx, i, j)] = u_center + a * (u_left + u_right + u_bottom + u_top - 4.0f * u_center);
+            u_dest[IX_U(ctx, i, j)] = compute_explicit_u_update(ctx, u_src, a, i, j);
         }
     }
 
@@ -106,13 +100,7 @@ void diffuse_velocity_explicit(FluidContext* ctx, float* u_dest, float* v_dest, 
                 v_dest[IX_V(ctx, i, j)] = 0.0f;
                 continue;
             }
-            float v_bottom = v_src[IX_V(ctx, i, j-1)];
-            float v_top = v_src[IX_V(ctx, i, j+1)];
-            float v_left = v_src[IX_V(ctx, i-1, j)];
-            float v_right = v_src[IX_V(ctx, i+1, j)];
-            float v_center = v_src[IX_V(ctx, i, j)];
-
-            v_dest[IX_V(ctx, i, j)] = v_center + a * (v_bottom + v_top + v_left + v_right - 4.0f * v_center);
+            v_dest[IX_V(ctx, i, j)] = compute_explicit_v_update(ctx, v_src, a, i, j);
         }
     }
 }
@@ -122,21 +110,15 @@ void diffuse_velocity_implicit(FluidContext* ctx, float* u_dest, float* v_dest, 
     mat_cpy(u_dest, (float*)u_src, ctx->x + 1, ctx->y);
     mat_cpy(v_dest, (float*)v_src, ctx->x, ctx->y + 1);
 
-    #pragma omp parallel for schedule(static)
     for (size_t iter = 0; iter < ctx->diffuse_iter; iter++) {
+
         // u (horizontal) velocity diffusion
         for (size_t i = 1; i < ctx->x; i++) {
             for (size_t j = 1; j < ctx->y - 1; j++) {
                 if (ctx->solid[IX(ctx, i - 1, j)] || ctx->solid[IX(ctx, i, j)]) {
                     continue;
                 }
-                
-                float u_left = u_dest[IX_U(ctx, i - 1, j)];
-                float u_right = u_dest[IX_U(ctx, i + 1, j)];
-                float u_bottom = u_dest[IX_U(ctx, i, j - 1)];
-                float u_top = u_dest[IX_U(ctx, i, j + 1)];
-
-                u_dest[IX_U(ctx, i, j)] = (u_src[IX_U(ctx, i, j)] + a * (u_left + u_right + u_bottom + u_top)) / (1.0f + 4.0f * a);
+                u_dest[IX_U(ctx, i, j)] = compute_implicit_u_update(ctx, u_dest, u_src, a, i, j);
             }
         }
 
@@ -146,13 +128,7 @@ void diffuse_velocity_implicit(FluidContext* ctx, float* u_dest, float* v_dest, 
                 if (ctx->solid[IX(ctx, i, j - 1)] || ctx->solid[IX(ctx, i, j)]) {
                     continue;
                 }
-
-                float v_bottom = v_dest[IX_V(ctx, i, j - 1)];
-                float v_top = v_dest[IX_V(ctx, i, j + 1)];
-                float v_left = v_dest[IX_V(ctx, i - 1, j)];
-                float v_right = v_dest[IX_V(ctx, i + 1, j)];
-
-                v_dest[IX_V(ctx, i, j)] = (v_src[IX_V(ctx, i, j)] + a * (v_bottom + v_top + v_left + v_right)) / (1.0f + 4.0f * a);
+                v_dest[IX_V(ctx, i, j)] = compute_implicit_v_update(ctx, v_dest, v_src, a, i, j);
             }
         }
     }
@@ -165,29 +141,6 @@ void diffuse_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const flo
     a < 0.25 ? diffuse_velocity_explicit(ctx, u_dest, v_dest, u_src, v_src, a) : diffuse_velocity_implicit(ctx, u_dest, v_dest, u_src, v_src, a);
 }
 
-void diffuse_scalar_implicit(FluidContext* ctx, float* dest, const float* src, float a) {
-
-    mat_cpy(dest, (float*)src, ctx->x, ctx->y);
-
-    #pragma omp parallel for schedule(static)
-    for (size_t iter = 0; iter < ctx->diffuse_iter; iter++) {
-        for (size_t i = 1; i < ctx->x - 1; i++) {
-            for (size_t j = 1; j < ctx->y - 1; j++) {
-                if (ctx->solid[IX(ctx, i, j)]) {
-                    continue;
-                }
-                
-                float left = dest[IX(ctx, i - 1, j)];
-                float right = dest[IX(ctx, i + 1, j)];
-                float bottom = dest[IX(ctx, i, j - 1)];
-                float top = dest[IX(ctx, i, j + 1)];
-
-                dest[IX(ctx, i, j)] = (src[IX(ctx, i, j)] + a * (left + right + bottom + top)) / (1.0f + 4.0f * a);
-            }
-        }
-    }
-}
-
 void diffuse_scalar_explicit(FluidContext* ctx, float* dest, const float* src, float a) {
 
     #pragma omp parallel for schedule(static)
@@ -197,13 +150,23 @@ void diffuse_scalar_explicit(FluidContext* ctx, float* dest, const float* src, f
                 dest[IX(ctx, i, j)] = 0.0f;
                 continue;
             }
-            float center = src[IX(ctx, i, j)];
-            float left = src[IX(ctx, i-1, j)];
-            float right = src[IX(ctx, i+1, j)];
-            float bottom = src[IX(ctx, i, j-1)];
-            float top = src[IX(ctx, i, j+1)];
+            dest[IX(ctx, i, j)] = compute_explicit_scalar_update(ctx, src, a, i, j);
+        }
+    }
+}
 
-            dest[IX(ctx, i, j)] = center + a * (left + right + bottom + top - 4.0f * center);
+void diffuse_scalar_implicit(FluidContext* ctx, float* dest, const float* src, float a) {
+
+    mat_cpy(dest, (float*)src, ctx->x, ctx->y);
+
+    for (size_t iter = 0; iter < ctx->diffuse_iter; iter++) {
+        for (size_t i = 1; i < ctx->x - 1; i++) {
+            for (size_t j = 1; j < ctx->y - 1; j++) {
+                if (ctx->solid[IX(ctx, i, j)]) {
+                    continue;
+                }
+                dest[IX(ctx, i, j)] = compute_implicit_scalar_update(ctx, dest, src, a, i, j);
+            }
         }
     }
 }
@@ -254,7 +217,7 @@ void advect_scalar(FluidContext* ctx, float* dest, const float* src, float* u, f
             float sy0 = 1.0f - sy1;
 
             // Weighted average of 4 cells
-            dest[IX(ctx, i, j)] = sx0 * (sy0 * src[IX(ctx, i0, j0)] + sy1 * src[IX(ctx, i0, j1)]) + sx1 * (sy0 * src[IX(ctx, i1, j0)] + sy1 * src[IX(ctx, i1, j1)]);
+            dest[IX(ctx, i, j)] = bilinear_interp(sx0, sx1, sy0, sy1, src[IX(ctx, i0, j0)], src[IX(ctx, i0, j1)], src[IX(ctx, i1, j0)], src[IX(ctx, i1, j1)]);
         }
     }
 }
@@ -300,7 +263,7 @@ void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const floa
             float sy0 = 1.0f - sy1;
 
             // Calculate the new value of u using bilinear interpolation.
-            u_dest[IX_U(ctx, i, j)] = sx0 * (sy0 * u_src[IX_U(ctx, i0, j0)] + sy1 * u_src[IX_U(ctx, i0, j1)]) + sx1 * (sy0 * u_src[IX_U(ctx, i1, j0)] + sy1 * u_src[IX_U(ctx, i1, j1)]);
+            u_dest[IX_U(ctx, i, j)] = bilinear_interp(sx0, sx1, sy0, sy1, u_src[IX_U(ctx, i0, j0)], u_src[IX_U(ctx, i0, j1)], u_src[IX_U(ctx, i1, j0)], u_src[IX_U(ctx, i1, j1)]);
         }
     }
 
@@ -343,7 +306,7 @@ void advect_velocity(FluidContext* ctx, float* u_dest, float* v_dest, const floa
             float sy0 = 1.0f - sy1;
 
             // Calculate the new value of v using bilinear interpolation.
-            v_dest[IX_V(ctx, i, j)] = sx0 * (sy0 * v_src[IX_V(ctx, i0, j0)] + sy1 * v_src[IX_V(ctx, i0, j1)]) + sx1 * (sy0 * v_src[IX_V(ctx, i1, j0)] + sy1 * v_src[IX_V(ctx, i1, j1)]);
+            v_dest[IX_V(ctx, i, j)] = bilinear_interp(sx0, sx1, sy0, sy1, v_src[IX_V(ctx, i0, j0)], v_src[IX_V(ctx, i0, j1)], v_src[IX_V(ctx, i1, j0)], v_src[IX_V(ctx, i1, j1)]);
         }
     }
 }
@@ -506,42 +469,6 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
     }
 }
 
-// Trying to optimize the RBGS memory layout will cause to change entire mapping,
-// so instead I decided to move to a better solver with the same layout and better convergence rate.
-// It performs more operations per iter, but the faster convergence and better true residual more than makes up for it. 
-//
-// RBGS: 650 iters, 27ms avg 0.86 FPS
-// CG : 308 iters, 45ms avg 0.84 FPS
-//
-// RBGS True Res: 2.05e-05
-// CG True Res: 8.3e-06 
-//
-// CG is delivering a more accurate solution for the same cost.
-
-
-// Nvm after update on the diffusion, results in benchmarking usually 2x faster for RBGS than CG (Also PCG with Jacobi).
-//
-// re:1280 lid driven 128x128 1e-5f 9999 itermax
-// sor
-// Simulated 1000 frames in 3.84 seconds (260.62 FPS)
-// rbgs
-// Simulated 1000 frames in 0.40 seconds (2479.79 FPS)
-// cg
-// Simulated 1000 frames in 1.05 seconds (956.48 FPS)
-// pcg
-// Simulated 1000 frames in 0.89 seconds (1118.98 FPS)
-// sor
-// Simulated 100 frames in 0.72 seconds (137.96 FPS)
-// rbgs
-// Simulated 100 frames in 0.15 seconds (687.29 FPS)
-// cg
-// Simulated 100 frames in 0.31 seconds (319.87 FPS)
-// pcg
-// Simulated 100 frames in 0.24 seconds (415.91 FPS) 
-//
-// Theoretically CG should be faster but i think the real bottleneck is the memory bandwidth here.
-// Since CG has more vector reads/writes per iter, it is more affected.
-
 void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
     size_t N = ctx->num_cells;
     float *r = ctx->cg_r;
@@ -565,7 +492,7 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
                 d[idx] = 0.0f;
                 continue;
             }
-            float Ap = apply_laplacian(ctx, p, i, j);
+            float Ap = apply_scalar_laplacian(ctx, p, i, j);
             r[idx] = div[idx] * cp - Ap;
         }
     }
@@ -585,7 +512,7 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
                     q[idx] = 0.0f;
                     continue;
                 }
-                q[idx] = apply_laplacian(ctx, d, i, j);
+                q[idx] = apply_scalar_laplacian(ctx, d, i, j);
             }
         }
 
@@ -748,6 +675,7 @@ void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
     // Projection
 
     // Divergence
+    mat_zero_float(ctx->div, ctx->x, ctx->y);
     compute_divergence(ctx, ctx->u, ctx->v);
     
     // Pressure Solve

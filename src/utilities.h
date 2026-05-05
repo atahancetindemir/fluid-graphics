@@ -55,21 +55,67 @@
         } \
     } while(0)
 
-// Fetch neighbors with Neumann BC handling for pressure solver
-static inline void fetch_neumann_neighbors(const FluidContext* ctx, const float* p, size_t i, size_t j, float* p_left, float* p_right, float* p_bottom, float* p_top) {
-    float p_center = p[IX(ctx, i, j)];
-
-    *p_left   = ctx->solid[IX(ctx, i - 1, j)] ? p_center : p[IX(ctx, i - 1, j)];
-    *p_right  = ctx->solid[IX(ctx, i + 1, j)] ? p_center : p[IX(ctx, i + 1, j)];
-    *p_bottom = ctx->solid[IX(ctx, i, j - 1)] ? p_center : p[IX(ctx, i, j - 1)];
-    *p_top    = ctx->solid[IX(ctx, i, j + 1)] ? p_center : p[IX(ctx, i, j + 1)];
+// Fetch neighbors with Neumann BC handling for cell-centered scalar fields.
+static inline float apply_scalar_laplacian(const FluidContext* ctx, const float* src, size_t i, size_t j) {
+    float center = src[IX(ctx, i, j)];
+    float left = ctx->solid[IX(ctx, i - 1, j)] ? center : src[IX(ctx, i - 1, j)];
+    float right = ctx->solid[IX(ctx, i + 1, j)] ? center : src[IX(ctx, i + 1, j)];
+    float bottom = ctx->solid[IX(ctx, i, j - 1)] ? center : src[IX(ctx, i, j - 1)];
+    float top = ctx->solid[IX(ctx, i, j + 1)] ? center : src[IX(ctx, i, j + 1)];
+    return left + right + bottom + top - 4.0f * center;
 }
 
-// Applies the 5-point Laplacian stencil to compute A*x for the Poisson equation with Neumann BCs.
-static inline float apply_laplacian(FluidContext* ctx, const float* x, size_t i, size_t j) {
-    float p_left, p_right, p_bottom, p_top;
-    fetch_neumann_neighbors(ctx, x, i, j, &p_left, &p_right, &p_bottom, &p_top);
-    return p_left + p_right + p_bottom + p_top - 4.0f * x[IX(ctx, i, j)];
+// 5-point Laplacian for u-field (no Neumann BC, Dirichlet at solids).
+static inline float apply_u_laplacian(const FluidContext* ctx, const float* u, size_t i, size_t j) {
+    float center = u[IX_U(ctx, i, j)];
+    float left = u[IX_U(ctx, i - 1, j)];
+    float right = u[IX_U(ctx, i + 1, j)];
+    float bottom = u[IX_U(ctx, i, j - 1)];
+    float top = u[IX_U(ctx, i, j + 1)];
+    return left + right + bottom + top - 4.0f * center;
+}
+
+// 5-point Laplacian for v-field (no Neumann BC, Dirichlet at solids).
+static inline float apply_v_laplacian(const FluidContext* ctx, const float* v, size_t i, size_t j) {
+    float center = v[IX_V(ctx, i, j)];
+    float left = v[IX_V(ctx, i - 1, j)];
+    float right = v[IX_V(ctx, i + 1, j)];
+    float bottom = v[IX_V(ctx, i, j - 1)];
+    float top = v[IX_V(ctx, i, j + 1)];
+    return left + right + bottom + top - 4.0f * center;
+}
+
+// One explicit diffusion step for a scalar field: u_new = u + a * Laplacian(u).
+static inline float compute_explicit_scalar_update(const FluidContext* ctx, const float* src, float a, size_t i, size_t j) {
+    return src[IX(ctx, i, j)] + a * apply_scalar_laplacian(ctx, src, i, j);
+}
+
+// One explicit diffusion step for u-field: u_new = u + a * Laplacian(u).
+static inline float compute_explicit_u_update(const FluidContext* ctx, const float* u_src, float a, size_t i, size_t j) {
+    return u_src[IX_U(ctx, i, j)] + a * apply_u_laplacian(ctx, u_src, i, j);
+}
+
+// One explicit diffusion step for v-field: v_new = v + a * Laplacian(v).
+static inline float compute_explicit_v_update(const FluidContext* ctx, const float* v_src, float a, size_t i, size_t j) {
+    return v_src[IX_V(ctx, i, j)] + a * apply_v_laplacian(ctx, v_src, i, j);
+}
+
+// One implicit Gauss-Seidel diffusion step for a scalar field.
+static inline float compute_implicit_scalar_update(const FluidContext* ctx, const float* dest, const float* src, float a, size_t i, size_t j) {
+    float neighbors = apply_scalar_laplacian(ctx, dest, i, j) + 4.0f * dest[IX(ctx, i, j)];
+    return (src[IX(ctx, i, j)] + a * neighbors) / (1.0f + 4.0f * a);
+}
+
+// One implicit Gauss-Seidel diffusion step for u-field.
+static inline float compute_implicit_u_update(const FluidContext* ctx, const float* u_dest, const float* u_src, float a, size_t i, size_t j) {
+    float neighbors = apply_u_laplacian(ctx, u_dest, i, j) + 4.0f * u_dest[IX_U(ctx, i, j)];
+    return (u_src[IX_U(ctx, i, j)] + a * neighbors) / (1.0f + 4.0f * a);
+}
+
+// One implicit Gauss-Seidel diffusion step for v-field.
+static inline float compute_implicit_v_update(const FluidContext* ctx, const float* v_dest, const float* v_src, float a, size_t i, size_t j) {
+    float neighbors = apply_v_laplacian(ctx, v_dest, i, j) + 4.0f * v_dest[IX_V(ctx, i, j)];
+    return (v_src[IX_V(ctx, i, j)] + a * neighbors) / (1.0f + 4.0f * a);
 }
 
 // Dot product of two vectors.
@@ -80,18 +126,28 @@ static inline float dot(const float* a, const float* b, size_t n) {
     return (float)acc;
 }
 
-// 5-point stencil application for Poisson equation with Neumann BCs
+// Gauss-Seidel Poisson update: returns new pressure from neighbors and divergence rhs.
 static inline float compute_poisson_update(const FluidContext* ctx, const float* p, const float* div, float cp, size_t i, size_t j) {
-    float p_left, p_right, p_bottom, p_top;
-    fetch_neumann_neighbors(ctx, p, i, j, &p_left, &p_right, &p_bottom, &p_top);
-    return (p_left + p_right + p_bottom + p_top - div[IX(ctx, i, j)] * cp) * 0.25f;
+    float center = p[IX(ctx, i, j)];
+    float left   = ctx->solid[IX(ctx, i - 1, j)] ? center : p[IX(ctx, i - 1, j)];
+    float right  = ctx->solid[IX(ctx, i + 1, j)] ? center : p[IX(ctx, i + 1, j)];
+    float bottom = ctx->solid[IX(ctx, i, j - 1)] ? center : p[IX(ctx, i, j - 1)];
+    float top    = ctx->solid[IX(ctx, i, j + 1)] ? center : p[IX(ctx, i, j + 1)];
+    return (left + right + bottom + top - div[IX(ctx, i, j)] * cp) * 0.25f;
 }
 
-// Calculate algebraic residual (b - Ax) for a single cell.
+// Pointwise residual of the Poisson equation: r = (Lap(p) - div*cp) at cell (i,j).
 static inline float compute_cell_residual(const FluidContext* ctx, const float* p, const float* div, float cp, size_t i, size_t j) {
-    float p_left, p_right, p_bottom, p_top;
-    fetch_neumann_neighbors(ctx, p, i, j, &p_left, &p_right, &p_bottom, &p_top);
-    return (p_left + p_right + p_bottom + p_top - 4.0f * p[IX(ctx, i, j)]) - div[IX(ctx, i, j)] * cp;
+    float center = p[IX(ctx, i, j)];
+    float left   = ctx->solid[IX(ctx, i - 1, j)] ? center : p[IX(ctx, i - 1, j)];
+    float right  = ctx->solid[IX(ctx, i + 1, j)] ? center : p[IX(ctx, i + 1, j)];
+    float bottom = ctx->solid[IX(ctx, i, j - 1)] ? center : p[IX(ctx, i, j - 1)];
+    float top    = ctx->solid[IX(ctx, i, j + 1)] ? center : p[IX(ctx, i, j + 1)];
+    return (left + right + bottom + top - 4.0f * center) - div[IX(ctx, i, j)] * cp;
+}
+
+static inline float bilinear_interp(float sx0, float sx1, float sy0, float sy1, float f00, float f01, float f10, float f11) {
+    return sx0 * (sy0 * f00 + sy1 * f01) + sx1 * (sy0 * f10 + sy1 * f11);
 }
 
 // Initializes rng with a seed

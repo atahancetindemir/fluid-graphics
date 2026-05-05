@@ -7,22 +7,11 @@
 #include "core.h"
 #include "preconditioners.h"
 
-// TODO:
-// - Add more metrics for unbiased benchmarking
-//    - for SOR, RBGS(non-contiguous), CG, PCG(With Jacobi)
-//    - scenario: lid driven, warmup before,
-//    - 1: constant iter count, 2: max iter with 1e-5f
-//    - get total frame, time spent, fps, ms/solve?
-//    - re: 100 -> 128x128, 256x256, 512x512, 1024x1024, 2048x2048
-//    - re: 400 -> 128x128, 256x256, 512x512, 1024x1024, 2048x2048
-//    - re: 1000 -> 128x128, 256x256, 512x512, 1024x1024, 2048x2048
-//
-
 int main(void) {
     FluidContext* ctx = fluid_create_context(128, 128, 0.016f, 0.1f, 1.0f, 1.0f, 9999, 1e-5f);
     ScenarioParams p;
     
-    Scenario scenario = load_scenario(LID_DRIVEN, ctx, &p);
+    Scenario scenario = load_scenario(KARMAN_VORTEX, ctx, &p);
     fluid_setup_physics(ctx, p, solve_pressure_rbgs, PRECOND_IDENTITY);
 #ifdef VALIDATE
     printf("Reynolds Number: %.2f\n", ctx->reynolds);
@@ -32,7 +21,7 @@ int main(void) {
     scenario.init(ctx, p);
 
     size_t steps_per_frame = 20;
-    size_t num_frames = 100;
+    size_t num_frames = 200;
     int warmup_frames = (int)((num_frames * steps_per_frame) / 20);
 
 #ifdef DBG
