@@ -8,6 +8,8 @@
 #include <time.h>
 #include <string.h>
 
+#define UNUSED(x) (void)(x)
+
 #ifndef INLINE
     #if defined(__GNUC__) || defined(__clang__)
         // GCC & Clang

@@ -477,7 +477,6 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
     float *z = ctx->cg_z;
 
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
-    float inv_cp = 1.0f / cp;
 
 #ifdef VALIDATE
     double start_time = GET_TIME_SEC();

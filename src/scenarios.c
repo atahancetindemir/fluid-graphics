@@ -69,6 +69,8 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
 // Lid-Driven Cavity Flow
 
 void init_lid_driven(FluidContext* ctx, ScenarioParams p) {
+    UNUSED(p);
+    
     // Build fully enclosed solid boundaries
     bound_build_outer_walls(ctx, 1, 1, 1, 1);
 
@@ -83,6 +85,8 @@ void init_lid_driven(FluidContext* ctx, ScenarioParams p) {
 }
 
 void apply_sources_lid_driven(FluidContext* ctx, ScenarioParams p) {
+    UNUSED(p);
+
     // Add smoke source at the bottom center
     for (size_t i = 3; i < ctx->x - 3; i++) {
         ctx->smoke[IX(ctx, i, ctx->y - 3)] = 1.0f;
@@ -128,6 +132,8 @@ void init_karman_vortex(FluidContext* ctx, ScenarioParams p) {
 }
 
 void apply_sources_karman_vortex(FluidContext* ctx, ScenarioParams p) {
+    UNUSED(p);
+    
     // Constant smoke injection behind the inlet
     for (size_t j = 1; j < ctx->y - 1; j++) {
         if (j > (ctx->y / 2 - 2) && j < (ctx->y / 2 + 2)) {
@@ -145,6 +151,8 @@ void apply_boundaries_karman_vortex(FluidContext* ctx, ScenarioParams p) {
 // NACA 2412 Airfoil
 
 void init_airfoil(FluidContext* ctx, ScenarioParams p) {
+    UNUSED(p);
+    
     // Clear domain and reset smoke
     for (size_t i = 0; i < ctx->x * ctx->y; i++) {
         ctx->solid[i] = 0;
@@ -202,7 +210,8 @@ void init_airfoil(FluidContext* ctx, ScenarioParams p) {
 }
 
 void apply_sources_airfoil(FluidContext* ctx, ScenarioParams p) {
-    // Unused (Smoke tracer is applied via inlet boundary)
+    UNUSED(ctx);
+    UNUSED(p);
 }
 
 void apply_boundaries_airfoil(FluidContext* ctx, ScenarioParams p) {
@@ -218,6 +227,8 @@ void apply_boundaries_airfoil(FluidContext* ctx, ScenarioParams p) {
 // Urban City
 
 void init_urban_city(FluidContext* ctx, ScenarioParams p) {
+    UNUSED(p);
+
     // Clear domain and set background ambient air
     for (size_t i = 0; i < ctx->x * ctx->y; i++) {
         ctx->solid[i] = 0;
@@ -259,7 +270,8 @@ void init_urban_city(FluidContext* ctx, ScenarioParams p) {
 }
 
 void apply_sources_urban_city(FluidContext* ctx, ScenarioParams p) {
-    // Unused
+    UNUSED(ctx);
+    UNUSED(p);
 }
 
 void apply_boundaries_urban_city(FluidContext* ctx, ScenarioParams p) {
