@@ -399,24 +399,14 @@ void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
 
         if (max_error < ctx->threshold) {
 #ifdef VALIDATE
-            double end_time = GET_TIME_SEC();
-
-            float true_residual = calculate_max_residual(ctx, p, div);
-            double elapsed_ms = (end_time - start_time) * 1000.0;
-            
-            printf("[RBGS] Converged in %zu iters | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", iter + 1, max_error, true_residual, elapsed_ms);
+            SOLVER_REPORT("RBGS", 1, iter + 1, max_error);
 #endif // VALIDATE
             break; // Convergence check
         }
 #ifdef VALIDATE
         // Max Iteration Check
         if (iter == ctx->poisson_iter - 1) {
-            double end_time = GET_TIME_SEC();
-            
-            float true_residual = calculate_max_residual(ctx, p, div);
-            double elapsed_ms = (end_time - start_time) * 1000.0;
-            
-            printf("[RBGS] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->poisson_iter, max_error, true_residual, elapsed_ms);
+            SOLVER_REPORT("RBGS", 0, ctx->poisson_iter, max_error);
         }
 #endif // VALIDATE
     }
@@ -446,24 +436,14 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
 
         if (max_error < ctx->threshold) {
 #ifdef VALIDATE
-            double end_time = GET_TIME_SEC();
-            
-            float true_residual = calculate_max_residual(ctx, p, div);
-            double elapsed_ms = (end_time - start_time) * 1000.0;
-            
-            printf("[SOR] Converged in %zu iters | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", iter + 1, max_error, true_residual, elapsed_ms);
+            SOLVER_REPORT("SOR", 1, iter + 1, max_error);
 #endif // VALIDATE
             break; // Convergence check
         }
 #ifdef VALIDATE
         // Max Iteration Check
         if (iter == ctx->poisson_iter - 1) {
-            double end_time = GET_TIME_SEC();
-            
-            float true_residual = calculate_max_residual(ctx, p, div);
-            double elapsed_ms = (end_time - start_time) * 1000.0;
-            
-            printf("[SOR] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->poisson_iter, max_error, true_residual, elapsed_ms);
+            SOLVER_REPORT("SOR", 0, ctx->poisson_iter, max_error);
         }
 #endif
     }
@@ -528,17 +508,13 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
 
         if (max_change < ctx->threshold) {
 #ifdef VALIDATE
-            double end_time = GET_TIME_SEC();
-            float true_residual = calculate_max_residual(ctx, p, div);
-            printf("[PCG] Converged in %zu iters | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", iter + 1, max_change, true_residual, (end_time - start_time) * 1000.0);
+            SOLVER_REPORT("PCG", 1, iter + 1, max_change);
 #endif
             break;
         }
 #ifdef VALIDATE
         if (iter == ctx->poisson_iter - 1) {
-            double end_time = GET_TIME_SEC();
-            float true_residual = calculate_max_residual(ctx, p, div);
-            printf("[PCG] Max iters (%zu) reached | Delta P: %.6e | True Res: %.6e | Time: %.2f ms\n", ctx->poisson_iter, max_change, true_residual, (end_time - start_time) * 1000.0);
+            SOLVER_REPORT("PCG", 0, ctx->poisson_iter, max_change);
         }
 #endif
 

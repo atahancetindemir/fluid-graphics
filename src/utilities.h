@@ -57,6 +57,12 @@
         } \
     } while(0)
 
+#define SOLVER_REPORT(tag, converged, iters, delta) \
+    do { \
+        double elapsed_ms = (GET_TIME_SEC() - start_time) * 1000.0; \
+        solver_report((tag), (converged), (iters), (delta), calculate_max_residual(ctx, p, div), elapsed_ms); \
+    } while(0)
+
 // Fetch neighbors with Neumann BC handling for cell-centered scalar fields.
 static inline float apply_scalar_laplacian(const FluidContext* ctx, const float* src, size_t i, size_t j) {
     float center = src[IX(ctx, i, j)];
@@ -148,6 +154,13 @@ static inline float compute_cell_residual(const FluidContext* ctx, const float* 
     return (left + right + bottom + top - 4.0f * center) - div[IX(ctx, i, j)] * cp;
 }
 
+// Single diagnostics line for one pressure solve.
+static inline void solver_report(const char* tag, int converged, size_t iters, float delta, float residual, double ms) {
+    printf("[%s] %-9s after %4zu iters | Delta P: %.6e | True Res: %.6e | Time: %8.2f ms | %6.4f ms/iter\n",
+           tag, converged ? "Converged" : "Stopped", iters, delta, residual, ms, iters ? ms / (double)iters : 0.0);
+}
+
+// Bilinear interpolation for advecting values at non-grid positions.
 static inline float bilinear_interp(float sx0, float sx1, float sy0, float sy1, float f00, float f01, float f10, float f11) {
     return sx0 * (sy0 * f00 + sy1 * f01) + sx1 * (sy0 * f10 + sy1 * f11);
 }

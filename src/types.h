@@ -54,6 +54,7 @@ struct FluidContext {
     float* cg_z;                    // Preconditioner vector for Conjugate Gradient
 };
 
+// Scenario Parameters
 typedef struct {
     float inlet_velocity;           // Characteristic velocity for the scenario
     float length_scale;             // Characteristic length scale for the scenario
