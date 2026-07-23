@@ -8,25 +8,25 @@
 #include "preconditioners.h"
 
 int main(void) {
-    FluidContext* ctx = fluid_create_context(1025, 1025, 0.016f, 0.1f, 1.0f, 0.01f, 9999, 1e-5f);
+    FluidContext* ctx = fluid_create_context(129, 129, 0.016f, 0.1f, 1.0f, 0.01f, 9999, 1e-5f);
     ScenarioParams p;
     
     Scenario scenario = load_scenario(LID_DRIVEN, ctx, &p);
     fluid_setup_physics(ctx, p, solve_pressure_rbgs, PRECOND_IDENTITY);
 
-#ifdef VALIDATE
+#ifdef DEBUG
     printf("Reynolds Number: %.2f\n", ctx->reynolds);
     printf("Omega: %.4f\n", ctx->omega);
-#endif // VALIDATE
+#endif // DEBUG
 
     scenario.init(ctx, p);
 
-    size_t steps_per_frame = 20;
-    size_t num_frames = 400;
+    size_t steps_per_frame = 1;
+    size_t num_frames = 100;
 
-#ifdef DBG
+#ifdef DEBUG
     double start_time = GET_TIME_SEC();
-#endif // DBG
+#endif // DEBUG
 
     for (size_t frame = 0; frame < num_frames; frame++) {
         for (size_t step = 0; step < steps_per_frame; step++) {
@@ -53,13 +53,13 @@ int main(void) {
 #endif // OUTPUT
     }
     
-#ifdef DBG
+#ifdef DEBUG
     double end_time = GET_TIME_SEC();
     double time_spent = (double)(end_time - start_time);
     int total_frame = num_frames * steps_per_frame;
     double fps = (double)total_frame / time_spent;
     printf("Simulated %d frames in %.2f seconds (%.2f FPS)\n", total_frame, time_spent, fps);
-#endif // DBG
+#endif // DEBUG
 
     fluid_destroy_context(ctx);
 

@@ -363,9 +363,9 @@ void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
 void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
-#ifdef VALIDATE
+#ifdef DEBUG
     double start_time = GET_TIME_SEC();
-#endif // VALIDATE
+#endif // DEBUG
 
     for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
         // Red pass - no error tracking needed here
@@ -398,26 +398,26 @@ void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
         }
 
         if (max_error < ctx->threshold) {
-#ifdef VALIDATE
+#ifdef DEBUG
             SOLVER_REPORT("RBGS", 1, iter + 1, max_error);
-#endif // VALIDATE
+#endif // DEBUG
             break; // Convergence check
         }
-#ifdef VALIDATE
+#ifdef DEBUG
         // Max Iteration Check
         if (iter == ctx->poisson_iter - 1) {
             SOLVER_REPORT("RBGS", 0, ctx->poisson_iter, max_error);
         }
-#endif // VALIDATE
+#endif // DEBUG
     }
 }
 
 void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
-#ifdef VALIDATE
+#ifdef DEBUG
     double start_time = GET_TIME_SEC();
-#endif // VALIDATE
+#endif // DEBUG
 
     for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
         float max_error = 0.0f;
@@ -435,12 +435,12 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
         }
 
         if (max_error < ctx->threshold) {
-#ifdef VALIDATE
+#ifdef DEBUG
             SOLVER_REPORT("SOR", 1, iter + 1, max_error);
-#endif // VALIDATE
+#endif // DEBUG
             break; // Convergence check
         }
-#ifdef VALIDATE
+#ifdef DEBUG
         // Max Iteration Check
         if (iter == ctx->poisson_iter - 1) {
             SOLVER_REPORT("SOR", 0, ctx->poisson_iter, max_error);
@@ -458,7 +458,7 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
 
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
-#ifdef VALIDATE
+#ifdef DEBUG
     double start_time = GET_TIME_SEC();
 #endif
 
@@ -507,12 +507,12 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
         }
 
         if (max_change < ctx->threshold) {
-#ifdef VALIDATE
+#ifdef DEBUG
             SOLVER_REPORT("PCG", 1, iter + 1, max_change);
 #endif
             break;
         }
-#ifdef VALIDATE
+#ifdef DEBUG
         if (iter == ctx->poisson_iter - 1) {
             SOLVER_REPORT("PCG", 0, ctx->poisson_iter, max_change);
         }
