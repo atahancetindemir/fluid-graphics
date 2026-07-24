@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <string.h>
+#include <errno.h>
 
 #define UNUSED(x) (void)(x)
 
@@ -237,13 +238,19 @@ static inline void mat_random(float* mat, size_t rows, size_t cols, float min, f
     }
 }
 
-// Save matrix to a file
-static inline void mat_save(float* mat, const char* filename, int rows, int cols, int stride) {
+// Save matrix to a file. Returns 0 on success, -1 if the file could not be opened.
+static inline int mat_save(float* mat, const char* filename, int rows, int cols, int stride) {
+    static int open_failed = 0;
+
     FILE* f = fopen(filename, "w");
     if (f == NULL) {
-        return;
+        if (!open_failed) {
+            fprintf(stderr, "mat_save: cannot open '%s': %s (further warnings suppressed)\n", filename, strerror(errno));
+            open_failed = 1;
+        }
+        return -1;
     }
-        
+
     // We save the matrix in column-major order to match the way we visualize it later.
     for (int j = cols - 1; j >= 0; j--) {
         for (int i = 0; i < rows; i++) {
@@ -252,6 +259,7 @@ static inline void mat_save(float* mat, const char* filename, int rows, int cols
         fprintf(f, "\n");
     }
     fclose(f);
+    return 0;
 }
 
 #endif // UTILITIES_H

@@ -8,7 +8,7 @@
 #include "preconditioners.h"
 
 int main(void) {
-    FluidContext* ctx = fluid_create_context(129, 129, 0.016f, 0.1f, 1.0f, 0.01f, 9999, 1e-5f);
+    FluidContext* ctx = fluid_create_context(257, 257, 0.000996f, 0.00392157f, 1.0f, 0.001f, 9999, 1e-6f);
     ScenarioParams p;
     
     Scenario scenario = load_scenario(LID_DRIVEN, ctx, &p);
@@ -21,8 +21,8 @@ int main(void) {
 
     scenario.init(ctx, p);
 
-    size_t steps_per_frame = 1;
-    size_t num_frames = 100;
+    size_t steps_per_frame = 2000;
+    size_t num_frames = 30;
 
 #ifdef DEBUG
     double start_time = GET_TIME_SEC();
