@@ -1,4 +1,4 @@
-#include "graphics_engine.hpp"
+#include "graphics.hpp"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -227,7 +227,7 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
 
 int main()
 {
-    graphics_engine engine(window_width, window_height, window_title);
+    graphics engine(window_width, window_height, window_title);
 
     FluidContext* fluid_context = fluid_create_context(
         default_grid_size, default_grid_size,

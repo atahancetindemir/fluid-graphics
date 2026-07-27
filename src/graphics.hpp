@@ -11,14 +11,14 @@ enum class visual_mode
     field_plus_vectors,
 };
 
-class graphics_engine
+class graphics
 {
 public:
-    graphics_engine(int width, int height, const char* title);
-    ~graphics_engine();
+    graphics(int width, int height, const char* title);
+    ~graphics();
 
-    graphics_engine(const graphics_engine&) = delete;
-    graphics_engine& operator=(const graphics_engine&) = delete;
+    graphics(const graphics&) = delete;
+    graphics& operator=(const graphics&) = delete;
 
     [[nodiscard]] bool should_close() const;
     [[nodiscard]] GLFWwindow* window() const { return glfw_window; }

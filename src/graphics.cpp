@@ -1,4 +1,4 @@
-#include "graphics_engine.hpp"
+#include "graphics.hpp"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -38,7 +38,7 @@ static void check_shader(unsigned int shader, const char* path)
     }
 }
 
-graphics_engine::graphics_engine(const int width, const int height, const char* title)
+graphics::graphics(const int width, const int height, const char* title)
 {
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -68,7 +68,7 @@ graphics_engine::graphics_engine(const int width, const int height, const char* 
     init_imgui();
 }
 
-graphics_engine::~graphics_engine()
+graphics::~graphics()
 {
     shutdown_imgui();
 
@@ -85,7 +85,7 @@ graphics_engine::~graphics_engine()
     glfwTerminate();
 }
 
-unsigned int graphics_engine::compile_shader(const char* vert_path, const char* frag_path)
+unsigned int graphics::compile_shader(const char* vert_path, const char* frag_path)
 {
     const std::string vert_source = read_file(vert_path);
     const std::string frag_source = read_file(frag_path);
@@ -121,7 +121,7 @@ unsigned int graphics_engine::compile_shader(const char* vert_path, const char* 
     return program;
 }
 
-void graphics_engine::create_quad()
+void graphics::create_quad()
 {
     constexpr float vertices[] = {
         -1.0f, -1.0f, 0.0f, 0.0f,
@@ -153,7 +153,7 @@ void graphics_engine::create_quad()
     glBindVertexArray(0);
 }
 
-void graphics_engine::create_arrow_buffer()
+void graphics::create_arrow_buffer()
 {
     glGenVertexArrays(1, &arrow_vao);
     glGenBuffers(1, &arrow_vbo);
@@ -167,7 +167,7 @@ void graphics_engine::create_arrow_buffer()
     glBindVertexArray(0);
 }
 
-void graphics_engine::init_imgui() const
+void graphics::init_imgui() const
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -176,18 +176,18 @@ void graphics_engine::init_imgui() const
     ImGui_ImplOpenGL3_Init("#version 330");
 }
 
-void graphics_engine::shutdown_imgui() const {
+void graphics::shutdown_imgui() const {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 }
 
-bool graphics_engine::should_close() const
+bool graphics::should_close() const
 {
     return glfwWindowShouldClose(glfw_window);
 }
 
-void graphics_engine::update_field(const float* data, const int width, const int height, const float range_min, const float range_max)
+void graphics::update_field(const float* data, const int width, const int height, const float range_min, const float range_max)
 {
     if (field_texture == 0 || width != field_width || height != field_height)
         create_field_texture(width, height);
@@ -201,7 +201,7 @@ void graphics_engine::update_field(const float* data, const int width, const int
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void graphics_engine::create_field_texture(const int width, const int height)
+void graphics::create_field_texture(const int width, const int height)
 {
     if (field_texture != 0)
         glDeleteTextures(1, &field_texture);
@@ -222,7 +222,7 @@ void graphics_engine::create_field_texture(const int width, const int height)
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void graphics_engine::update_arrows(const float* u, const float* v, const int width, const int height, int stride, const float scale)
+void graphics::update_arrows(const float* u, const float* v, const int width, const int height, int stride, const float scale)
 {
     if (stride < 1) stride = 1;
 
@@ -314,14 +314,14 @@ void graphics_engine::update_arrows(const float* u, const float* v, const int wi
     arrow_vert_count = vert_count;
 }
 
-void graphics_engine::begin_ui() const
+void graphics::begin_ui() const
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 }
 
-void graphics_engine::draw(const visual_mode mode) const
+void graphics::draw(const visual_mode mode) const
 {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
