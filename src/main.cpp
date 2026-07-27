@@ -197,7 +197,9 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
         ImGui::Text("Omega: %.4f (auto)", fluid_context->omega);
     else
         ImGui::SliderFloat("Omega", &fluid_context->omega, 1.0f, 1.99f);
-    ImGui::SliderInt("Poisson Iter", &fluid_context->poisson_iter, 1, 2000);
+    int poisson_iter = (int)fluid_context->poisson_iter;
+    if (ImGui::SliderInt("Poisson Iter", &poisson_iter, 1, 2000))
+        fluid_context->poisson_iter = (size_t)poisson_iter;
     ImGui::SliderFloat("Threshold", &fluid_context->threshold, 1e-7f, 1e-3f, "%.7f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderInt("Substeps/Frame", &controls.substeps_per_frame, 1, 50);
     ImGui::SliderInt("Arrow Stride", &controls.arrow_stride, 2, 32);

@@ -7,6 +7,8 @@
 #include <imgui_impl_opengl3.h>
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -23,16 +25,40 @@ constexpr float min_arrow_length = 1e-6f;
     return string_stream.str();
 }
 
+// Report a shader compile failure with its source path. Silent failures here are
+// exactly what makes a blank window so hard to diagnose.
+static void check_shader(unsigned int shader, const char* path)
+{
+    int compiled = 0;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (!compiled) {
+        char log[1024];
+        glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+        fprintf(stderr, "shader compile failed (%s):\n%s\n", path, log);
+    }
+}
+
 graphics_engine::graphics_engine(const int width, const int height, const char* title)
 {
     glfwInit();
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
     glfw_window = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    if (glfw_window == nullptr) {
+        const char* desc = nullptr;
+        glfwGetError(&desc);
+        fprintf(stderr, "GLFW window creation failed: %s\n", desc ? desc : "unknown");
+        glfwTerminate();
+        exit(1);
+    }
     glfwMakeContextCurrent(glfw_window);
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+
+    fprintf(stderr, "GL %s | GLSL %s | %s\n",
+            glGetString(GL_VERSION), glGetString(GL_SHADING_LANGUAGE_VERSION),
+            glGetString(GL_RENDERER));
 
     field_shader = compile_shader("assets/shaders/field.vert", "assets/shaders/field.frag");
     arrow_shader = compile_shader("assets/shaders/arrow.vert", "assets/shaders/arrow.frag");
@@ -69,15 +95,25 @@ unsigned int graphics_engine::compile_shader(const char* vert_path, const char* 
     const unsigned int vert = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vert, 1, &vert_chars, nullptr);
     glCompileShader(vert);
+    check_shader(vert, vert_path);
 
     const unsigned int frag = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(frag, 1, &frag_chars, nullptr);
     glCompileShader(frag);
+    check_shader(frag, frag_path);
 
     const unsigned int program = glCreateProgram();
     glAttachShader(program, vert);
     glAttachShader(program, frag);
     glLinkProgram(program);
+
+    int linked = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        char log[1024];
+        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+        fprintf(stderr, "shader link failed (%s + %s):\n%s\n", vert_path, frag_path, log);
+    }
 
     glDeleteShader(vert);
     glDeleteShader(frag);
@@ -137,7 +173,7 @@ void graphics_engine::init_imgui() const
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(glfw_window, true);
-    ImGui_ImplOpenGL3_Init("#version 460");
+    ImGui_ImplOpenGL3_Init("#version 330");
 }
 
 void graphics_engine::shutdown_imgui() const {
