@@ -1,4 +1,2 @@
-.venv
-frames
-bin
-fluid
+build
+imgui.ini
