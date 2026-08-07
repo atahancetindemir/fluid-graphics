@@ -49,8 +49,23 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div);
 // Solves the pressure Poisson equation using Preconditioned Conjugate Gradient method.
 void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div);
 
+// Computes the cell-centered velocity magnitude for every cell into dest (num_cells floats).
+void fluid_velocity_magnitude(const FluidContext* ctx, float* dest);
+
 // Start the simulation by creating a context with given parameters.
 FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters, float threshold);
+
+// Zeroes every simulation field while keeping the allocation and the physics settings intact.
+void fluid_reset_context(FluidContext* ctx);
+
+// Returns the theoretically optimal over-relaxation factor for the grid, clamped to [1.0, 1.99].
+float fluid_optimal_omega(const FluidContext* ctx);
+
+// Recomputes the Reynolds number from the current viscosity, density and scenario parameters.
+void fluid_update_reynolds(FluidContext* ctx, ScenarioParams p);
+
+// Points the context at the preconditioner implementation matching the given type.
+void fluid_set_preconditioner(FluidContext* ctx, PrecondType precondition);
 
 /**
  * @brief Configures the physics parameters of the fluid simulation context, including the pressure solver and preconditioner.

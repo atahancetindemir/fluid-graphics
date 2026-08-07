@@ -545,61 +545,112 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float d
     ctx->diffuse_iter = 20;
     ctx->threshold = threshold;
 
-    ctx->u = (float*)calloc((res_x + 1) * res_y, sizeof(float));
-    ctx->v = (float*)calloc(res_x * (res_y + 1), sizeof(float));
-    ctx->p = (float*)calloc(ctx->num_cells, sizeof(float));
-    ctx->div = (float*)calloc(ctx->num_cells, sizeof(float));
-    ctx->smoke = (float*)calloc(ctx->num_cells, sizeof(float));
-    ctx->solid = (uint8_t*)calloc(ctx->num_cells, sizeof(uint8_t));
+    ctx->u = (float*)malloc((res_x + 1) * res_y * sizeof(float));
+    ctx->v = (float*)malloc(res_x * (res_y + 1) * sizeof(float));
+    ctx->p = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->div = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->smoke = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->solid = (uint8_t*)malloc(ctx->num_cells * sizeof(uint8_t));
 
-    ctx->u_prev = (float*)calloc((res_x + 1) * res_y, sizeof(float));
-    ctx->v_prev = (float*)calloc(res_x * (res_y + 1), sizeof(float));
-    ctx->smoke_prev = (float*)calloc(ctx->num_cells, sizeof(float));
+    ctx->u_prev = (float*)malloc((res_x + 1) * res_y * sizeof(float));
+    ctx->v_prev = (float*)malloc(res_x * (res_y + 1) * sizeof(float));
+    ctx->smoke_prev = (float*)malloc(ctx->num_cells * sizeof(float));
 
-    ctx->cg_r = (float*)calloc(ctx->num_cells, sizeof(float));
-    ctx->cg_d = (float*)calloc(ctx->num_cells, sizeof(float));
-    ctx->cg_q = (float*)calloc(ctx->num_cells, sizeof(float));
-    ctx->cg_z = (float*)calloc(ctx->num_cells, sizeof(float));
+    ctx->cg_r = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->cg_d = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->cg_q = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->cg_z = (float*)malloc(ctx->num_cells * sizeof(float));
+
+    // Which fields get zeroed lives in exactly one place: fluid_reset_context.
+    fluid_reset_context(ctx);
 
     return ctx;
 }
 
-void fluid_setup_physics(FluidContext* ctx, ScenarioParams p, PressureSolver pressure_solver, PrecondType precondition) {
-    ctx->pressure_solver = pressure_solver;
+void fluid_reset_context(FluidContext* ctx) {
+    if (!ctx) return;
 
+    size_t u_count = (ctx->x + 1) * ctx->y;
+    size_t v_count = ctx->x * (ctx->y + 1);
+
+    memset(ctx->u, 0, u_count * sizeof(float));
+    memset(ctx->v, 0, v_count * sizeof(float));
+    memset(ctx->p, 0, ctx->num_cells * sizeof(float));
+    memset(ctx->div, 0, ctx->num_cells * sizeof(float));
+    memset(ctx->smoke, 0, ctx->num_cells * sizeof(float));
+    memset(ctx->solid, 0, ctx->num_cells * sizeof(uint8_t));
+
+    memset(ctx->u_prev, 0, u_count * sizeof(float));
+    memset(ctx->v_prev, 0, v_count * sizeof(float));
+    memset(ctx->smoke_prev, 0, ctx->num_cells * sizeof(float));
+
+    memset(ctx->cg_r, 0, ctx->num_cells * sizeof(float));
+    memset(ctx->cg_d, 0, ctx->num_cells * sizeof(float));
+    memset(ctx->cg_q, 0, ctx->num_cells * sizeof(float));
+    memset(ctx->cg_z, 0, ctx->num_cells * sizeof(float));
+}
+
+float fluid_optimal_omega(const FluidContext* ctx) {
+    float omega = 2.0f / (1.0f + sinf(PI / (float)ctx->x));
+
+    if (omega >= 1.99f) {
+        return 1.99f;   // Clamp for upperbound
+    } else if (omega < 1.0f) {
+        return 1.0f;    // Back to gauss-seidel
+    }
+    return omega;
+}
+
+void fluid_update_reynolds(FluidContext* ctx, ScenarioParams p) {
+    if (ctx->visc > 0.0f) { // avoid zero-divison
+        ctx->reynolds = (ctx->dens * p.inlet_velocity * p.length_scale ) / ctx->visc;
+    } else { // clamp
+        ctx->reynolds = 0.0f;
+    }
+}
+
+void fluid_set_preconditioner(FluidContext* ctx, PrecondType precondition) {
     switch (precondition) {
-        case PRECOND_IDENTITY:
-            ctx->precondition = precondition_identity;
-            break;
         case PRECOND_JACOBI:
             ctx->precondition = precondition_jacobi;
             break;
         case PRECOND_MULTIGRID:
             ctx->precondition = precondition_multigrid;
             break;
+        case PRECOND_IDENTITY:
         default: // fallback to identity
             ctx->precondition = precondition_identity;
             break;
     }
+}
 
-    // Calculate reynolds
-    if (ctx->visc > 0.0f) { // avoid zero-divison
-        ctx->reynolds = (ctx->dens * p.inlet_velocity * p.length_scale ) / ctx->visc;
-    } else { // clamp
-        ctx->reynolds = 0.0f;
+void fluid_velocity_magnitude(const FluidContext* ctx, float* dest) {
+
+    #pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < ctx->x; i++) {
+        for (size_t j = 0; j < ctx->y; j++) {
+            float u_center = 0.5f * (ctx->u[IX_U(ctx, i, j)] + ctx->u[IX_U(ctx, i + 1, j)]);
+            float v_center = 0.5f * (ctx->v[IX_V(ctx, i, j)] + ctx->v[IX_V(ctx, i, j + 1)]);
+            dest[IX(ctx, i, j)] = sqrtf(u_center * u_center + v_center * v_center);
+        }
     }
+}
+
+void fluid_setup_physics(FluidContext* ctx, ScenarioParams p, PressureSolver pressure_solver, PrecondType precondition) {
+    ctx->pressure_solver = pressure_solver;
+
+    fluid_set_preconditioner(ctx, precondition);
+    fluid_update_reynolds(ctx, p);
 
     // Find optimum omega for different scenarios
     if (p.target_omega <= 0.0f) {
-        ctx->omega = 2.0f / (1.0f + sinf(PI / (float)ctx->x));
+        ctx->omega = fluid_optimal_omega(ctx);
+    } else if (p.target_omega >= 1.99f) {
+        ctx->omega = 1.99f; // Clamp for upperbound
+    } else if (p.target_omega < 1.0f) {
+        ctx->omega = 1.0f;  // Back to gauss-seidel
     } else {
         ctx->omega = p.target_omega;
-    }
-
-    if (ctx->omega >= 1.99f) {
-        ctx->omega = 1.99f; // Clamp for upperbound
-    } else if (ctx->omega < 1.0f) {
-        ctx->omega = 1.0f;  // Back to gauss-seidel
     }
 }
 
