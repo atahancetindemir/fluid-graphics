@@ -46,7 +46,7 @@ set(IMGUI_EXECUTABLES
 find_package(OpenMP COMPONENTS C CXX)
 
 add_executable(fluid-graphics
-    src/viewer.cpp
+    src/main.cpp
     src/graphics.cpp
     external/glad/src/glad.c
     src/core.c

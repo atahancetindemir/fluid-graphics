@@ -5,7 +5,6 @@
 
 #include <cmath>
 #include <cstdio>
-#include <cstring>
 #include <limits>
 #include <vector>
 #include <omp.h>
@@ -17,8 +16,6 @@ extern "C"
     #include "scenarios.h"
     #include "preconditioners.h"
 }
-
-constexpr float pi = 3.14159265358979323846f;
 
 constexpr int window_width = 800;
 constexpr int window_height = 800;
@@ -32,6 +29,8 @@ constexpr float default_viscosity = 0.001f;
 constexpr int default_poisson_iter = 100;
 constexpr float default_threshold = 1e-4f;
 
+constexpr int min_poisson_iter = 10;
+
 constexpr double title_update_interval = 0.5;
 
 struct runtime_controls
@@ -42,8 +41,9 @@ struct runtime_controls
     int arrow_stride = 8;
     float arrow_scale = 0.04f;
     bool auto_omega = true;
-    bool request_reset = false;
-    bool request_rebuild_scenario = false;
+
+    bool request_restart = false;
+    bool request_reload = false;
 
     // 0 = PCG, 1 = RBGS, 2 = SOR
     int solver_index = 0;
@@ -71,6 +71,12 @@ struct runtime_controls
     }
 }
 
+// Omega only enters the Gauss-Seidel style sweeps; PCG never reads it.
+[[nodiscard]] bool solver_uses_omega(const int index)
+{
+    return index != 0;
+}
+
 void scan_min_max(const float* data, const size_t count, float& out_min, float& out_max)
 {
     out_min = std::numeric_limits<float>::infinity();
@@ -81,65 +87,28 @@ void scan_min_max(const float* data, const size_t count, float& out_min, float& 
         if (value < out_min) out_min = value;
         if (value > out_max) out_max = value;
     }
-    if (!std::isfinite(out_min) || !std::isfinite(out_max))
+    // A degenerate range would make the colour mapping divide by ~zero, so fall back to [0, 1].
+    if (!std::isfinite(out_min) || !std::isfinite(out_max) || out_max - out_min < 1e-6f)
     {
         out_min = 0.0f;
         out_max = 1.0f;
     }
 }
 
-void compute_velocity_magnitude(const FluidContext* fluid_context, float* out, float& out_min, float& out_max)
+
+// Clears the simulation and starts the scenario over.
+void begin_run(FluidContext* fluid_context, ScenarioParams& params, const runtime_controls& controls,
+               Scenario& scenario, const bool load_defaults)
 {
-    out_min = std::numeric_limits<float>::infinity();
-    out_max = -std::numeric_limits<float>::infinity();
+    if (load_defaults)
+        scenario = load_scenario(controls.scenario_type, fluid_context, &params);
+    else
+        scenario_update_derived(controls.scenario_type, fluid_context, &params);
 
-    const size_t height = fluid_context->y;
-    const size_t height_plus_one = height + 1;
-
-    for (size_t i = 0; i < fluid_context->x; ++i)
-    {
-        for (size_t j = 0; j < height; ++j)
-        {
-            const float u_center = 0.5f * (fluid_context->u[i * height + j] + fluid_context->u[(i + 1) * height + j]);
-            const float v_center = 0.5f * (fluid_context->v[i * height_plus_one + j] + fluid_context->v[i * height_plus_one + (j + 1)]);
-            const float magnitude = std::sqrt(u_center * u_center + v_center * v_center);
-            out[i * height + j] = magnitude;
-            if (magnitude < out_min) out_min = magnitude;
-            if (magnitude > out_max) out_max = magnitude;
-        }
-    }
-    if (!std::isfinite(out_min) || !std::isfinite(out_max) || out_max <= out_min)
-    {
-        out_min = 0.0f;
-        out_max = 1.0f;
-    }
-}
-
-[[nodiscard]] Scenario reload_scenario(FluidContext* fluid_context, ScenarioParams& params, const ScenarioType type,
-                                       const PressureSolver solver, const PrecondType precond)
-{
-    const size_t u_count = (fluid_context->x + 1) * fluid_context->y;
-    const size_t v_count = fluid_context->x * (fluid_context->y + 1);
-    const size_t cells = fluid_context->num_cells;
-
-    std::memset(fluid_context->u, 0, u_count * sizeof(float));
-    std::memset(fluid_context->v, 0, v_count * sizeof(float));
-    std::memset(fluid_context->p, 0, cells * sizeof(float));
-    std::memset(fluid_context->div, 0, cells * sizeof(float));
-    std::memset(fluid_context->smoke, 0, cells * sizeof(float));
-    std::memset(fluid_context->solid, 0, cells * sizeof(uint8_t));
-    std::memset(fluid_context->u_prev, 0, u_count * sizeof(float));
-    std::memset(fluid_context->v_prev, 0, v_count * sizeof(float));
-    std::memset(fluid_context->smoke_prev, 0, cells * sizeof(float));
-    std::memset(fluid_context->cg_r, 0, cells * sizeof(float));
-    std::memset(fluid_context->cg_d, 0, cells * sizeof(float));
-    std::memset(fluid_context->cg_q, 0, cells * sizeof(float));
-    std::memset(fluid_context->cg_z, 0, cells * sizeof(float));
-
-    Scenario scenario = load_scenario(type, fluid_context, &params);
-    fluid_setup_physics(fluid_context, params, solver, precond);
+    fluid_reset_context(fluid_context);
+    fluid_setup_physics(fluid_context, params, pick_solver(controls.solver_index),
+                        pick_precond(controls.preconditioner_index));
     scenario.init(fluid_context, params);
-    return scenario;
 }
 
 void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context, ScenarioParams& params)
@@ -167,7 +136,7 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
     if (ImGui::Combo("Scenario", &scenario_index, scenario_items, IM_ARRAYSIZE(scenario_items)))
     {
         controls.scenario_type = (ScenarioType)scenario_index;
-        controls.request_rebuild_scenario = true;
+        controls.request_reload = true;
     }
     ImGui::Separator();
 
@@ -177,30 +146,28 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
     if (ImGui::Combo("Pressure Solver", &controls.solver_index, solver_items, IM_ARRAYSIZE(solver_items)))
         fluid_context->pressure_solver = pick_solver(controls.solver_index);
     if (ImGui::Combo("Preconditioner", &controls.preconditioner_index, precond_items, IM_ARRAYSIZE(precond_items)))
-    {
-        // Setting the function pointer directly mirrors what fluid_setup_physics does internally.
-        switch (pick_precond(controls.preconditioner_index))
-        {
-            case PRECOND_IDENTITY: fluid_context->precondition = precondition_identity; break;
-            case PRECOND_JACOBI: fluid_context->precondition = precondition_jacobi; break;
-            case PRECOND_MULTIGRID: fluid_context->precondition = precondition_multigrid; break;
-        }
-    }
+        fluid_set_preconditioner(fluid_context, pick_precond(controls.preconditioner_index));
     ImGui::Separator();
 
     ImGui::Text("Parameters");
     ImGui::SliderFloat("Inlet Velocity", &params.inlet_velocity, 0.0f, 5.0f);
     ImGui::SliderFloat("Viscosity", &fluid_context->visc, 0.0001f, 0.1f, "%.5f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderFloat("dt", &fluid_context->dt, 0.001f, 0.05f, "%.4f");
+
+    const bool omega_used = solver_uses_omega(controls.solver_index);
+    ImGui::BeginDisabled(!omega_used);
     ImGui::Checkbox("Auto Omega", &controls.auto_omega);
     if (controls.auto_omega)
         ImGui::Text("Omega: %.4f (auto)", fluid_context->omega);
     else
         ImGui::SliderFloat("Omega", &fluid_context->omega, 1.0f, 1.99f);
+    ImGui::EndDisabled();
+    if (!omega_used)
+        ImGui::TextDisabled("PCG does not use omega.");
+
     int poisson_iter = (int)fluid_context->poisson_iter;
-    if (ImGui::SliderInt("Poisson Iter", &poisson_iter, 1, 2000))
+    if (ImGui::SliderInt("Poisson Iter", &poisson_iter, min_poisson_iter, 2000))
         fluid_context->poisson_iter = (size_t)poisson_iter;
-    ImGui::SliderFloat("Threshold", &fluid_context->threshold, 1e-7f, 1e-3f, "%.7f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderInt("Substeps/Frame", &controls.substeps_per_frame, 1, 50);
     ImGui::SliderInt("Arrow Stride", &controls.arrow_stride, 2, 32);
     ImGui::SliderFloat("Arrow Scale", &controls.arrow_scale, 0.001f, 0.2f, "%.4f", ImGuiSliderFlags_Logarithmic);
@@ -215,12 +182,12 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
         if (ImGui::SliderInt("Obstacle Radius", &radius, 2, (int)(fluid_context->y / 4)))
             params.obstacle_radius = (size_t)radius;
         if (ImGui::Button("Rebuild Solids"))
-            controls.request_rebuild_scenario = true;
+            controls.request_restart = true;
         ImGui::Separator();
     }
 
     if (ImGui::Button("Reset"))
-        controls.request_reset = true;
+        controls.request_restart = true;
 
     ImGui::End();
 }
@@ -237,9 +204,8 @@ int main()
 
     runtime_controls controls;
     ScenarioParams params;
-    Scenario scenario = reload_scenario(fluid_context, params, controls.scenario_type,
-                                        pick_solver(controls.solver_index),
-                                        pick_precond(controls.preconditioner_index));
+    Scenario scenario;
+    begin_run(fluid_context, params, controls, scenario, true);
 
     std::vector<float> velocity_magnitudes((size_t)fluid_context->num_cells, 0.0f);
 
@@ -252,9 +218,11 @@ int main()
         const double delta_time = now - last_time;
         last_time = now;
 
-        // Auto-recompute omega each frame if enabled (the user may have changed grid via rebuild).
         if (controls.auto_omega)
-            fluid_context->omega = 2.0f / (1.0f + std::sin(pi / (float)fluid_context->x));
+            fluid_context->omega = fluid_optimal_omega(fluid_context);
+
+        // Viscosity and inlet velocity are live, so the reported Reynolds has to follow them.
+        fluid_update_reynolds(fluid_context, params);
 
         for (int s = 0; s < controls.substeps_per_frame; ++s)
             fluid_step(fluid_context, params, scenario);
@@ -262,13 +230,11 @@ int main()
         engine.begin_ui();
         draw_control_panel(controls, fluid_context, params);
 
-        if (controls.request_reset || controls.request_rebuild_scenario)
+        if (controls.request_reload || controls.request_restart)
         {
-            scenario = reload_scenario(fluid_context, params, controls.scenario_type,
-                                       pick_solver(controls.solver_index),
-                                       pick_precond(controls.preconditioner_index));
-            controls.request_reset = false;
-            controls.request_rebuild_scenario = false;
+            begin_run(fluid_context, params, controls, scenario, controls.request_reload);
+            controls.request_reload = false;
+            controls.request_restart = false;
         }
 
         const int width = (int)fluid_context->x;
@@ -284,7 +250,6 @@ int main()
                 float pressure_min;
                 float pressure_max;
                 scan_min_max(fluid_context->p, fluid_context->num_cells, pressure_min, pressure_max);
-                if (pressure_max - pressure_min < 1e-6f) { pressure_min = 0.0f; pressure_max = 1.0f; }
                 engine.update_field(fluid_context->p, width, height, pressure_min, pressure_max);
                 break;
             }
@@ -293,7 +258,8 @@ int main()
             {
                 float velocity_min;
                 float velocity_max;
-                compute_velocity_magnitude(fluid_context, velocity_magnitudes.data(), velocity_min, velocity_max);
+                fluid_velocity_magnitude(fluid_context, velocity_magnitudes.data());
+                scan_min_max(velocity_magnitudes.data(), fluid_context->num_cells, velocity_min, velocity_max);
                 engine.update_field(velocity_magnitudes.data(), width, height, velocity_min, velocity_max);
                 break;
             }

@@ -7,16 +7,36 @@
 #include "utilities.h"
 #include "boundaries.h"
 
+void scenario_update_derived(ScenarioType type, const FluidContext* ctx, ScenarioParams* p) {
+    switch (type) {
+        case KARMAN_VORTEX:
+            p->length_scale = 2.0f * (float)p->obstacle_radius * ctx->dx;
+            break;
+
+        case AIRFOIL:
+            p->length_scale = p->chord_length;
+            break;
+
+        case URBAN_CITY:
+            p->length_scale = (float)ctx->x * 0.08f * ctx->dx;
+            break;
+
+        case LID_DRIVEN:
+        default:
+            p->length_scale = (float)ctx->x * ctx->dx;
+            break;
+    }
+}
+
 Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) {
     Scenario s;
-    
+
     // Default for all scenarios
     p->target_omega = 0.0f;
 
     switch (type) {
         case LID_DRIVEN:
         p->inlet_velocity = 1.0f;
-        p->length_scale = (float)ctx->x * ctx->dx;
 
         s.init = init_lid_driven;
         s.apply_sources = apply_sources_lid_driven;
@@ -28,7 +48,6 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
             p->obstacle_x = ctx->x / 4.0f;
             p->obstacle_y = ctx->y / 2.0f;
             p->obstacle_radius = 10.0f;
-            p->length_scale = 2.0f * p->obstacle_radius * ctx->dx;
 
             s.init = init_karman_vortex;
             s.apply_sources = apply_sources_karman_vortex;
@@ -39,7 +58,6 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
             p->inlet_velocity = 2.0f;
             p->chord_length = ctx->x * ctx->dx * 0.4f;
             p->angle_of_attack = 0.0f;
-            p->length_scale = p->chord_length;
 
             s.init = init_airfoil;
             s.apply_sources = apply_sources_airfoil;
@@ -48,7 +66,6 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
 
         case URBAN_CITY:
             p->inlet_velocity = 1.5f;
-            p->length_scale = (float)ctx->x * 0.08f * ctx->dx;
 
             s.init = init_urban_city;
             s.apply_sources = apply_sources_urban_city;
@@ -57,12 +74,14 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
 
         default:
             // Fallback to lid-driven if unknown type
-            p->length_scale = (float)ctx->x * ctx->dx;
-
             s.init = init_lid_driven;
             s.apply_sources = apply_sources_lid_driven;
             s.apply_boundaries = apply_boundaries_lid_driven;
     }
+
+    // Derived from the defaults just written, and re-runnable after the user edits them.
+    scenario_update_derived(type, ctx, p);
+
     return s;
 }
 

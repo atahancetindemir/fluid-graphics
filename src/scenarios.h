@@ -26,6 +26,10 @@ typedef struct {
  */
 Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p);
 
+// Recomputes the parameters that are derived from other scenario parameters, currently the
+// characteristic length scale. Call this after editing a parameter the length scale depends on
+void scenario_update_derived(ScenarioType type, const FluidContext* ctx, ScenarioParams* p);
+
 // Lid-Driven Cavity Flow
 
 void init_lid_driven(FluidContext* ctx, ScenarioParams p);
