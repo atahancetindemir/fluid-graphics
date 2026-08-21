@@ -77,7 +77,7 @@ scheme is first-order accurate in time and the splitting error is $O(\Delta t)$.
 Each face value is found by tracing the characteristic backwards one step and interpolating:
 
 $$
-\mathbf{u}^a(\mathbf{x}) = \mathbf{u}^n\!\left(\mathbf{x} - \Delta t\, \mathbf{u}^n(\mathbf{x})\right)
+\mathbf{u}^a(\mathbf{x}) = \mathbf{u}^n\left(\mathbf{x} - \Delta t \mathbf{u}^n(\mathbf{x})\right)
 $$
 
 with bilinear interpolation at the departure point and clamping to keep the sample inside the
@@ -90,7 +90,7 @@ The scheme is unconditionally stable, with no CFL limit, and first order in spac
 The viscous term is applied with a 5-point Laplacian. The scheme is chosen from the diffusion number
 
 $$
-a = \frac{\nu \, \Delta t}{\Delta x^2}
+a = \frac{\nu \Delta t}{\Delta x^2}
 $$
 
 | Condition | Scheme |
@@ -146,11 +146,16 @@ $$
 \omega_{\text{opt}} = \frac{2}{1 + \sin(\pi / M)}
 $$
 
-clamped to $[1.0,\ 1.99]$. PCG ignores it, and the UI disables the control when PCG is selected.
+clamped to $[1.0, 1.99]$. PCG ignores it, and the UI disables the control when PCG is selected.
 
 All three routines stop on the maximum change between iterations,
-$\max_{ij} |p^{k+1}_{ij} - p^k_{ij}| < \varepsilon$. In RBGS the change is measured over the black
-pass only, which runs second and therefore already sees the red updates.
+
+$$
+\max_{ij} \left| p^{k+1}_{ij} - p^k_{ij} \right| < \varepsilon
+$$
+
+In RBGS the change is measured over the black pass only, which runs second and therefore already
+sees the red updates.
 
 ### Preconditioners
 
