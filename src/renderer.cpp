@@ -1,4 +1,4 @@
-#include "graphics.hpp"
+#include "renderer.hpp"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -36,7 +36,7 @@ static void check_shader(unsigned int shader, const char* path) {
     }
 }
 
-graphics::graphics(const int width, const int height, const char* title) {
+Renderer::Renderer(const int width, const int height, const char* title) {
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -65,7 +65,7 @@ graphics::graphics(const int width, const int height, const char* title) {
     init_imgui();
 }
 
-graphics::~graphics() {
+Renderer::~Renderer() {
     shutdown_imgui();
 
     glDeleteTextures(1, &field_texture);
@@ -81,7 +81,7 @@ graphics::~graphics() {
     glfwTerminate();
 }
 
-unsigned int graphics::compile_shader(const char* vert_path, const char* frag_path) {
+unsigned int Renderer::compile_shader(const char* vert_path, const char* frag_path) {
     const std::string vert_source = read_file(vert_path);
     const std::string frag_source = read_file(frag_path);
     const char* vert_chars = vert_source.c_str();
@@ -116,7 +116,7 @@ unsigned int graphics::compile_shader(const char* vert_path, const char* frag_pa
     return program;
 }
 
-void graphics::create_quad() {
+void Renderer::create_quad() {
     constexpr float vertices[] = {
         -1.0f, -1.0f, 0.0f, 0.0f,
          1.0f, -1.0f, 1.0f, 0.0f,
@@ -147,7 +147,7 @@ void graphics::create_quad() {
     glBindVertexArray(0);
 }
 
-void graphics::create_arrow_buffer() {
+void Renderer::create_arrow_buffer() {
     glGenVertexArrays(1, &arrow_vao);
     glGenBuffers(1, &arrow_vbo);
 
@@ -160,7 +160,7 @@ void graphics::create_arrow_buffer() {
     glBindVertexArray(0);
 }
 
-void graphics::init_imgui() const {
+void Renderer::init_imgui() const {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
@@ -168,17 +168,17 @@ void graphics::init_imgui() const {
     ImGui_ImplOpenGL3_Init("#version 330");
 }
 
-void graphics::shutdown_imgui() const {
+void Renderer::shutdown_imgui() const {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 }
 
-bool graphics::should_close() const {
+bool Renderer::should_close() const {
     return glfwWindowShouldClose(glfw_window);
 }
 
-void graphics::update_field(const float* data, const int width, const int height, const float range_min, const float range_max) {
+void Renderer::update_field(const float* data, const int width, const int height, const float range_min, const float range_max) {
     if (field_texture == 0 || width != field_width || height != field_height)
         create_field_texture(width, height);
 
@@ -191,7 +191,7 @@ void graphics::update_field(const float* data, const int width, const int height
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void graphics::create_field_texture(const int width, const int height) {
+void Renderer::create_field_texture(const int width, const int height) {
     if (field_texture != 0)
         glDeleteTextures(1, &field_texture);
 
@@ -211,7 +211,7 @@ void graphics::create_field_texture(const int width, const int height) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void graphics::update_arrows(const float* u, const float* v, const int width, const int height, int stride, const float scale) {
+void Renderer::update_arrows(const float* u, const float* v, const int width, const int height, int stride, const float scale) {
     if (stride < 1) stride = 1;
 
     std::vector<float> vertices;
@@ -293,22 +293,22 @@ void graphics::update_arrows(const float* u, const float* v, const int width, co
     arrow_vert_count = vert_count;
 }
 
-void graphics::begin_ui() const {
+void Renderer::begin_ui() const {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 }
 
-void graphics::draw(const visual_mode mode) const {
+void Renderer::draw(const ViewMode mode) const {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    const bool draw_field = (mode == visual_mode::smoke ||
-                             mode == visual_mode::pressure ||
-                             mode == visual_mode::velocity_magnitude ||
-                             mode == visual_mode::field_plus_vectors);
-    const bool draw_arrows = (mode == visual_mode::velocity_vectors_only ||
-                              mode == visual_mode::field_plus_vectors);
+    const bool draw_field = (mode == ViewMode::SMOKE ||
+                             mode == ViewMode::PRESSURE ||
+                             mode == ViewMode::VELOCITY_MAGNITUDE ||
+                             mode == ViewMode::FIELD_AND_VECTORS);
+    const bool draw_arrows = (mode == ViewMode::VECTORS ||
+                              mode == ViewMode::FIELD_AND_VECTORS);
 
     if (draw_field && field_texture != 0) {
         glUseProgram(field_shader);

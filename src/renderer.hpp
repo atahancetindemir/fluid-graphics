@@ -1,23 +1,23 @@
-#ifndef GRAPHICS_HPP
-#define GRAPHICS_HPP
+#ifndef RENDERER_HPP
+#define RENDERER_HPP
 
 struct GLFWwindow;
 
-enum class visual_mode {
-    smoke,
-    pressure,
-    velocity_magnitude,
-    velocity_vectors_only,
-    field_plus_vectors,
+enum class ViewMode {
+    SMOKE,
+    PRESSURE,
+    VELOCITY_MAGNITUDE,
+    VECTORS,
+    FIELD_AND_VECTORS,
 };
 
-class graphics {
+class Renderer {
 public:
-    graphics(int width, int height, const char* title);
-    ~graphics();
+    Renderer(int width, int height, const char* title);
+    ~Renderer();
 
-    graphics(const graphics&) = delete;
-    graphics& operator=(const graphics&) = delete;
+    Renderer(const Renderer&) = delete;
+    Renderer& operator=(const Renderer&) = delete;
 
     [[nodiscard]] bool should_close() const;
     [[nodiscard]] GLFWwindow* window() const { return glfw_window; }
@@ -25,7 +25,7 @@ public:
     void update_field(const float* data, int width, int height, float range_min, float range_max);
     void update_arrows(const float* u, const float* v, int width, int height, int stride, float scale);
     void begin_ui() const;
-    void draw(visual_mode mode) const;
+    void draw(ViewMode mode) const;
 
 private:
     [[nodiscard]] static unsigned int compile_shader(const char* vert_path, const char* frag_path);
@@ -54,4 +54,4 @@ private:
     int arrow_vbo_capacity = 0;
 };
 
-#endif // GRAPHICS_HPP
+#endif // RENDERER_HPP

@@ -47,7 +47,7 @@ find_package(OpenMP COMPONENTS C CXX)
 
 add_executable(fluid-graphics
     src/main.cpp
-    src/graphics.cpp
+    src/renderer.cpp
     external/glad/src/glad.c
     src/core.c
     src/boundaries.c

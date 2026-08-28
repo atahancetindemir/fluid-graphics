@@ -1,4 +1,4 @@
-#include "graphics.hpp"
+#include "renderer.hpp"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -33,7 +33,7 @@ constexpr int min_poisson_iter = 10;
 constexpr double title_update_interval = 0.5;
 
 struct runtime_controls {
-    visual_mode mode = visual_mode::smoke;
+    ViewMode mode = ViewMode::SMOKE;
     ScenarioType scenario_type = KARMAN_VORTEX;
     int substeps_per_frame = 5;
     int arrow_stride = 8;
@@ -111,12 +111,12 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
 
     ImGui::Text("Visualization");
     int mode = (int)controls.mode;
-    ImGui::RadioButton("Smoke", &mode, (int)visual_mode::smoke);
-    ImGui::RadioButton("Pressure", &mode, (int)visual_mode::pressure);
-    ImGui::RadioButton("Velocity Mag", &mode, (int)visual_mode::velocity_magnitude);
-    ImGui::RadioButton("Vectors Only", &mode, (int)visual_mode::velocity_vectors_only);
-    ImGui::RadioButton("Field + Vectors", &mode, (int)visual_mode::field_plus_vectors);
-    controls.mode = (visual_mode)mode;
+    ImGui::RadioButton("Smoke", &mode, (int)ViewMode::SMOKE);
+    ImGui::RadioButton("Pressure", &mode, (int)ViewMode::PRESSURE);
+    ImGui::RadioButton("Velocity Mag", &mode, (int)ViewMode::VELOCITY_MAGNITUDE);
+    ImGui::RadioButton("Vectors Only", &mode, (int)ViewMode::VECTORS);
+    ImGui::RadioButton("Field + Vectors", &mode, (int)ViewMode::FIELD_AND_VECTORS);
+    controls.mode = (ViewMode)mode;
     ImGui::Separator();
 
     static const char* scenario_items[] = { "Lid-Driven", "Karman Vortex", "Airfoil", "Urban City" };
@@ -179,7 +179,7 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
 }
 
 int main() {
-    graphics engine(window_width, window_height, window_title);
+    Renderer engine(window_width, window_height, window_title);
 
     FluidContext* fluid_context = fluid_create_context(
         default_grid_size, default_grid_size,
@@ -224,18 +224,18 @@ int main() {
         const int height = (int)fluid_context->y;
 
         switch (controls.mode) {
-            case visual_mode::smoke:
+            case ViewMode::SMOKE:
                 engine.update_field(fluid_context->smoke, width, height, 0.0f, 1.0f);
                 break;
-            case visual_mode::pressure: {
+            case ViewMode::PRESSURE: {
                 float pressure_min;
                 float pressure_max;
                 scan_min_max(fluid_context->p, fluid_context->num_cells, pressure_min, pressure_max);
                 engine.update_field(fluid_context->p, width, height, pressure_min, pressure_max);
                 break;
             }
-            case visual_mode::velocity_magnitude:
-            case visual_mode::field_plus_vectors: {
+            case ViewMode::VELOCITY_MAGNITUDE:
+            case ViewMode::FIELD_AND_VECTORS: {
                 float velocity_min;
                 float velocity_max;
                 fluid_velocity_magnitude(fluid_context, velocity_magnitudes.data());
@@ -243,11 +243,11 @@ int main() {
                 engine.update_field(velocity_magnitudes.data(), width, height, velocity_min, velocity_max);
                 break;
             }
-            case visual_mode::velocity_vectors_only:
+            case ViewMode::VECTORS:
                 break;
         }
 
-        if (controls.mode == visual_mode::velocity_vectors_only || controls.mode == visual_mode::field_plus_vectors)
+        if (controls.mode == ViewMode::VECTORS || controls.mode == ViewMode::FIELD_AND_VECTORS)
             engine.update_arrows(fluid_context->u, fluid_context->v, width, height, controls.arrow_stride, controls.arrow_scale);
 
         engine.draw(controls.mode);
