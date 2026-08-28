@@ -6,6 +6,10 @@ The solver is plain C11 with OpenMP; the viewer is C++17 (GLFW + glad + Dear ImG
 no graphics dependency: the viewer reads simulation fields straight out of engine memory, with no
 file exchange between the two. Everything runs interactively at grid sizes around $256^2$.
 
+Header extensions mark the language boundary: `.h` headers are C and callable from either side,
+`.hpp` headers are C++ only. `Renderer` owns the window and the GL resources and never sees a
+`FluidContext`; `Viewer` is the single place where the solver and the renderer meet.
+
 ## Governing equations
 
 The solver integrates the incompressible Navier–Stokes equations for a Newtonian fluid with
@@ -239,8 +243,9 @@ src/
   preconditioners.c/.h CG preconditioners
   utilities.h          indexing macros, stencils, diagnostics
   types.h              FluidContext and scenario parameters
-  graphics.cpp/.hpp    OpenGL field and arrow rendering
-  main.cpp             window, frame loop, ImGui panel
+  renderer.cpp/.hpp    OpenGL field and arrow rendering
+  viewer.cpp/.hpp      binds solver to renderer: ImGui panel, frame step
+  main.cpp             entry point: constructs the two layers, runs the loop
 assets/shaders/        GLSL 3.30 field and arrow shaders
 external/glad/         vendored GL loader
 CMakeLists.txt         build: fetches GLFW and imgui, links OpenMP when found
