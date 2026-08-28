@@ -25,25 +25,62 @@ constexpr int min_poisson_iter = 10;
 
 constexpr double title_update_interval = 0.5;
 
-[[nodiscard]] static PressureSolver pick_solver(const int index) {
-    switch (index) {
-        case 1: return solve_pressure_rbgs;
-        case 2: return solve_pressure_sor;
-        default: return solve_pressure_pcg;
-    }
-}
+// Each menu below is driven by one table, so a label, the value it selects and the
+// properties that depend on it are declared together and cannot drift apart.
 
-[[nodiscard]] static PrecondType pick_precond(const int index) {
-    switch (index) {
-        case 0: return PRECOND_IDENTITY;
-        case 2: return PRECOND_MULTIGRID;
-        default: return PRECOND_JACOBI;
-    }
-}
+struct ScenarioOption {
+    const char* label;
+    ScenarioType type;
+};
 
-// Omega only enters the Gauss-Seidel style sweeps; PCG never reads it.
-[[nodiscard]] static bool solver_uses_omega(const int index) {
-    return index != 0;
+struct SolverOption {
+    const char* label;
+    PressureSolver solve;
+    // Omega only enters the Gauss-Seidel style sweeps; PCG never reads it.
+    bool uses_omega;
+};
+
+struct PrecondOption {
+    const char* label;
+    PrecondType type;
+};
+
+constexpr ScenarioOption scenario_options[] = {
+    { "Lid-Driven",    LID_DRIVEN    },
+    { "Karman Vortex", KARMAN_VORTEX },
+    { "Airfoil",       AIRFOIL       },
+    { "Urban City",    URBAN_CITY    },
+};
+
+constexpr SolverOption solver_options[] = {
+    { "PCG",  solve_pressure_pcg,  false },
+    { "RBGS", solve_pressure_rbgs, true  },
+    { "SOR",  solve_pressure_sor,  true  },
+};
+
+constexpr PrecondOption precond_options[] = {
+    { "Identity",  PRECOND_IDENTITY  },
+    { "Jacobi",    PRECOND_JACOBI    },
+    { "Multigrid", PRECOND_MULTIGRID },
+};
+
+// Renders a combo straight off an option table. Returns true when the selection changed.
+template <typename Option, size_t N>
+static bool option_combo(const char* label, int& index, const Option (&options)[N]) {
+    bool changed = false;
+    if (ImGui::BeginCombo(label, options[index].label)) {
+        for (int i = 0; i < (int)N; ++i) {
+            const bool selected = (index == i);
+            if (ImGui::Selectable(options[i].label, selected)) {
+                index = i;
+                changed = true;
+            }
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
 }
 
 // Finds the value range a field should be colour mapped against.
@@ -86,8 +123,8 @@ void Viewer::restart(const bool load_defaults) {
         scenario_update_derived(controls.scenario_type, ctx, &params);
 
     fluid_reset_context(ctx);
-    fluid_setup_physics(ctx, params, pick_solver(controls.solver_index),
-                        pick_precond(controls.preconditioner_index));
+    fluid_setup_physics(ctx, params, solver_options[controls.solver_index].solve,
+                        precond_options[controls.preconditioner_index].type);
     scenario.init(ctx, params);
 }
 
@@ -134,21 +171,24 @@ void Viewer::draw_controls() {
     controls.mode = (ViewMode)mode;
     ImGui::Separator();
 
-    static const char* scenario_items[] = { "Lid-Driven", "Karman Vortex", "Airfoil", "Urban City" };
-    int scenario_index = (int)controls.scenario_type;
-    if (ImGui::Combo("Scenario", &scenario_index, scenario_items, IM_ARRAYSIZE(scenario_items))) {
-        controls.scenario_type = (ScenarioType)scenario_index;
+    // The scenario is held as a domain type rather than a menu index, because the
+    // solver API and the obstacle panel below both read it.
+    int scenario_index = 0;
+    for (int i = 0; i < IM_ARRAYSIZE(scenario_options); ++i) {
+        if (scenario_options[i].type == controls.scenario_type)
+            scenario_index = i;
+    }
+    if (option_combo("Scenario", scenario_index, scenario_options)) {
+        controls.scenario_type = scenario_options[scenario_index].type;
         controls.request_reload = true;
     }
     ImGui::Separator();
 
     ImGui::Text("Solver");
-    static const char* solver_items[] = { "PCG", "RBGS", "SOR" };
-    static const char* precond_items[] = { "Identity", "Jacobi", "Multigrid" };
-    if (ImGui::Combo("Pressure Solver", &controls.solver_index, solver_items, IM_ARRAYSIZE(solver_items)))
-        ctx->pressure_solver = pick_solver(controls.solver_index);
-    if (ImGui::Combo("Preconditioner", &controls.preconditioner_index, precond_items, IM_ARRAYSIZE(precond_items)))
-        fluid_set_preconditioner(ctx, pick_precond(controls.preconditioner_index));
+    if (option_combo("Pressure Solver", controls.solver_index, solver_options))
+        ctx->pressure_solver = solver_options[controls.solver_index].solve;
+    if (option_combo("Preconditioner", controls.preconditioner_index, precond_options))
+        fluid_set_preconditioner(ctx, precond_options[controls.preconditioner_index].type);
     ImGui::Separator();
 
     ImGui::Text("Parameters");
@@ -156,7 +196,7 @@ void Viewer::draw_controls() {
     ImGui::SliderFloat("Viscosity", &ctx->visc, 0.0001f, 0.1f, "%.5f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderFloat("dt", &ctx->dt, 0.001f, 0.05f, "%.4f");
 
-    const bool omega_used = solver_uses_omega(controls.solver_index);
+    const bool omega_used = solver_options[controls.solver_index].uses_omega;
     ImGui::BeginDisabled(!omega_used);
     ImGui::Checkbox("Auto Omega", &controls.auto_omega);
     if (controls.auto_omega)

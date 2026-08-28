@@ -28,9 +28,9 @@ struct ViewerControls {
     bool request_restart = false;
     bool request_reload = false;
 
-    // 0 = PCG, 1 = RBGS, 2 = SOR
+    // Indices into the solver and preconditioner option tables in viewer.cpp.
+    // These stay menu selections; they are translated to solver types at the table.
     int solver_index = 0;
-    // 0 = Identity, 1 = Jacobi, 2 = Multigrid (placeholder)
     int preconditioner_index = 1;
 };
 
