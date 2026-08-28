@@ -9,8 +9,7 @@
 #include <vector>
 #include <omp.h>
 
-extern "C"
-{
+extern "C" {
     #include "types.h"
     #include "core.h"
     #include "scenarios.h"
@@ -33,8 +32,7 @@ constexpr int min_poisson_iter = 10;
 
 constexpr double title_update_interval = 0.5;
 
-struct runtime_controls
-{
+struct runtime_controls {
     visual_mode mode = visual_mode::smoke;
     ScenarioType scenario_type = KARMAN_VORTEX;
     int substeps_per_frame = 5;
@@ -51,20 +49,16 @@ struct runtime_controls
     int preconditioner_index = 1;
 };
 
-[[nodiscard]] PressureSolver pick_solver(const int index)
-{
-    switch (index)
-    {
+[[nodiscard]] PressureSolver pick_solver(const int index) {
+    switch (index) {
         case 1: return solve_pressure_rbgs;
         case 2: return solve_pressure_sor;
         default: return solve_pressure_pcg;
     }
 }
 
-[[nodiscard]] PrecondType pick_precond(const int index)
-{
-    switch (index)
-    {
+[[nodiscard]] PrecondType pick_precond(const int index) {
+    switch (index) {
         case 0: return PRECOND_IDENTITY;
         case 2: return PRECOND_MULTIGRID;
         default: return PRECOND_JACOBI;
@@ -72,24 +66,20 @@ struct runtime_controls
 }
 
 // Omega only enters the Gauss-Seidel style sweeps; PCG never reads it.
-[[nodiscard]] bool solver_uses_omega(const int index)
-{
+[[nodiscard]] bool solver_uses_omega(const int index) {
     return index != 0;
 }
 
-void scan_min_max(const float* data, const size_t count, float& out_min, float& out_max)
-{
+void scan_min_max(const float* data, const size_t count, float& out_min, float& out_max) {
     out_min = std::numeric_limits<float>::infinity();
     out_max = -std::numeric_limits<float>::infinity();
-    for (size_t i = 0; i < count; ++i)
-    {
+    for (size_t i = 0; i < count; ++i) {
         const float value = data[i];
         if (value < out_min) out_min = value;
         if (value > out_max) out_max = value;
     }
     // A degenerate range would make the colour mapping divide by ~zero, so fall back to [0, 1].
-    if (!std::isfinite(out_min) || !std::isfinite(out_max) || out_max - out_min < 1e-6f)
-    {
+    if (!std::isfinite(out_min) || !std::isfinite(out_max) || out_max - out_min < 1e-6f) {
         out_min = 0.0f;
         out_max = 1.0f;
     }
@@ -98,8 +88,7 @@ void scan_min_max(const float* data, const size_t count, float& out_min, float& 
 
 // Clears the simulation and starts the scenario over.
 void begin_run(FluidContext* fluid_context, ScenarioParams& params, const runtime_controls& controls,
-               Scenario& scenario, const bool load_defaults)
-{
+               Scenario& scenario, const bool load_defaults) {
     if (load_defaults)
         scenario = load_scenario(controls.scenario_type, fluid_context, &params);
     else
@@ -111,8 +100,7 @@ void begin_run(FluidContext* fluid_context, ScenarioParams& params, const runtim
     scenario.init(fluid_context, params);
 }
 
-void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context, ScenarioParams& params)
-{
+void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context, ScenarioParams& params) {
     ImGui::Begin("Controls");
 
     const ImGuiIO& io = ImGui::GetIO();
@@ -133,8 +121,7 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
 
     static const char* scenario_items[] = { "Lid-Driven", "Karman Vortex", "Airfoil", "Urban City" };
     int scenario_index = (int)controls.scenario_type;
-    if (ImGui::Combo("Scenario", &scenario_index, scenario_items, IM_ARRAYSIZE(scenario_items)))
-    {
+    if (ImGui::Combo("Scenario", &scenario_index, scenario_items, IM_ARRAYSIZE(scenario_items))) {
         controls.scenario_type = (ScenarioType)scenario_index;
         controls.request_reload = true;
     }
@@ -173,8 +160,7 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
     ImGui::SliderFloat("Arrow Scale", &controls.arrow_scale, 0.001f, 0.2f, "%.4f", ImGuiSliderFlags_Logarithmic);
     ImGui::Separator();
 
-    if (controls.scenario_type == KARMAN_VORTEX)
-    {
+    if (controls.scenario_type == KARMAN_VORTEX) {
         ImGui::Text("Karman Obstacle");
         ImGui::SliderFloat("Obstacle X", &params.obstacle_x, 1.0f, (float)fluid_context->x - 2.0f);
         ImGui::SliderFloat("Obstacle Y", &params.obstacle_y, 1.0f, (float)fluid_context->y - 2.0f);
@@ -192,8 +178,7 @@ void draw_control_panel(runtime_controls& controls, FluidContext* fluid_context,
     ImGui::End();
 }
 
-int main()
-{
+int main() {
     graphics engine(window_width, window_height, window_title);
 
     FluidContext* fluid_context = fluid_create_context(
@@ -212,8 +197,7 @@ int main()
     double last_time = glfwGetTime();
     double title_timer = 0.0;
 
-    while (!engine.should_close())
-    {
+    while (!engine.should_close()) {
         const double now = glfwGetTime();
         const double delta_time = now - last_time;
         last_time = now;
@@ -230,8 +214,7 @@ int main()
         engine.begin_ui();
         draw_control_panel(controls, fluid_context, params);
 
-        if (controls.request_reload || controls.request_restart)
-        {
+        if (controls.request_reload || controls.request_restart) {
             begin_run(fluid_context, params, controls, scenario, controls.request_reload);
             controls.request_reload = false;
             controls.request_restart = false;
@@ -240,13 +223,11 @@ int main()
         const int width = (int)fluid_context->x;
         const int height = (int)fluid_context->y;
 
-        switch (controls.mode)
-        {
+        switch (controls.mode) {
             case visual_mode::smoke:
                 engine.update_field(fluid_context->smoke, width, height, 0.0f, 1.0f);
                 break;
-            case visual_mode::pressure:
-            {
+            case visual_mode::pressure: {
                 float pressure_min;
                 float pressure_max;
                 scan_min_max(fluid_context->p, fluid_context->num_cells, pressure_min, pressure_max);
@@ -254,8 +235,7 @@ int main()
                 break;
             }
             case visual_mode::velocity_magnitude:
-            case visual_mode::field_plus_vectors:
-            {
+            case visual_mode::field_plus_vectors: {
                 float velocity_min;
                 float velocity_max;
                 fluid_velocity_magnitude(fluid_context, velocity_magnitudes.data());
@@ -273,8 +253,7 @@ int main()
         engine.draw(controls.mode);
 
         title_timer += delta_time;
-        if (title_timer > title_update_interval)
-        {
+        if (title_timer > title_update_interval) {
             char title_buffer[80];
             std::snprintf(title_buffer, sizeof(title_buffer), "Fluid Simulation - %.1f FPS", 1.0 / (delta_time > 0.0 ? delta_time : 1.0));
             glfwSetWindowTitle(engine.window(), title_buffer);

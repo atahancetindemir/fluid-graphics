@@ -1,9 +1,9 @@
-#pragma once
+#ifndef GRAPHICS_HPP
+#define GRAPHICS_HPP
 
 struct GLFWwindow;
 
-enum class visual_mode
-{
+enum class visual_mode {
     smoke,
     pressure,
     velocity_magnitude,
@@ -11,8 +11,7 @@ enum class visual_mode
     field_plus_vectors,
 };
 
-class graphics
-{
+class graphics {
 public:
     graphics(int width, int height, const char* title);
     ~graphics();
@@ -54,3 +53,5 @@ private:
     int arrow_vert_count = 0;
     int arrow_vbo_capacity = 0;
 };
+
+#endif // GRAPHICS_HPP

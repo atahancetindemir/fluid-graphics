@@ -17,8 +17,7 @@ constexpr float arrowhead_ratio = 0.3f;
 constexpr float arrowhead_half_spread = 0.5f;
 constexpr float min_arrow_length = 1e-6f;
 
-[[nodiscard]] static std::string read_file(const char* path)
-{
+[[nodiscard]] static std::string read_file(const char* path) {
     const std::ifstream file_stream(path);
     std::stringstream string_stream;
     string_stream << file_stream.rdbuf();
@@ -27,8 +26,7 @@ constexpr float min_arrow_length = 1e-6f;
 
 // Report a shader compile failure with its source path. Silent failures here are
 // exactly what makes a blank window so hard to diagnose.
-static void check_shader(unsigned int shader, const char* path)
-{
+static void check_shader(unsigned int shader, const char* path) {
     int compiled = 0;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
     if (!compiled) {
@@ -38,8 +36,7 @@ static void check_shader(unsigned int shader, const char* path)
     }
 }
 
-graphics::graphics(const int width, const int height, const char* title)
-{
+graphics::graphics(const int width, const int height, const char* title) {
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -68,8 +65,7 @@ graphics::graphics(const int width, const int height, const char* title)
     init_imgui();
 }
 
-graphics::~graphics()
-{
+graphics::~graphics() {
     shutdown_imgui();
 
     glDeleteTextures(1, &field_texture);
@@ -85,8 +81,7 @@ graphics::~graphics()
     glfwTerminate();
 }
 
-unsigned int graphics::compile_shader(const char* vert_path, const char* frag_path)
-{
+unsigned int graphics::compile_shader(const char* vert_path, const char* frag_path) {
     const std::string vert_source = read_file(vert_path);
     const std::string frag_source = read_file(frag_path);
     const char* vert_chars = vert_source.c_str();
@@ -121,8 +116,7 @@ unsigned int graphics::compile_shader(const char* vert_path, const char* frag_pa
     return program;
 }
 
-void graphics::create_quad()
-{
+void graphics::create_quad() {
     constexpr float vertices[] = {
         -1.0f, -1.0f, 0.0f, 0.0f,
          1.0f, -1.0f, 1.0f, 0.0f,
@@ -153,8 +147,7 @@ void graphics::create_quad()
     glBindVertexArray(0);
 }
 
-void graphics::create_arrow_buffer()
-{
+void graphics::create_arrow_buffer() {
     glGenVertexArrays(1, &arrow_vao);
     glGenBuffers(1, &arrow_vbo);
 
@@ -167,8 +160,7 @@ void graphics::create_arrow_buffer()
     glBindVertexArray(0);
 }
 
-void graphics::init_imgui() const
-{
+void graphics::init_imgui() const {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::StyleColorsDark();
@@ -182,13 +174,11 @@ void graphics::shutdown_imgui() const {
     ImGui::DestroyContext();
 }
 
-bool graphics::should_close() const
-{
+bool graphics::should_close() const {
     return glfwWindowShouldClose(glfw_window);
 }
 
-void graphics::update_field(const float* data, const int width, const int height, const float range_min, const float range_max)
-{
+void graphics::update_field(const float* data, const int width, const int height, const float range_min, const float range_max) {
     if (field_texture == 0 || width != field_width || height != field_height)
         create_field_texture(width, height);
 
@@ -201,8 +191,7 @@ void graphics::update_field(const float* data, const int width, const int height
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void graphics::create_field_texture(const int width, const int height)
-{
+void graphics::create_field_texture(const int width, const int height) {
     if (field_texture != 0)
         glDeleteTextures(1, &field_texture);
 
@@ -222,8 +211,7 @@ void graphics::create_field_texture(const int width, const int height)
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void graphics::update_arrows(const float* u, const float* v, const int width, const int height, int stride, const float scale)
-{
+void graphics::update_arrows(const float* u, const float* v, const int width, const int height, int stride, const float scale) {
     if (stride < 1) stride = 1;
 
     std::vector<float> vertices;
@@ -232,10 +220,8 @@ void graphics::update_arrows(const float* u, const float* v, const int width, co
     const size_t u_stride = (size_t)height;
     const size_t v_stride = (size_t)(height + 1);
 
-    for (int i = stride / 2; i < width; i += stride)
-    {
-        for (int j = stride / 2; j < height; j += stride)
-        {
+    for (int i = stride / 2; i < width; i += stride) {
+        for (int j = stride / 2; j < height; j += stride) {
             // Cell-centered velocity from staggered grid (matches IX_U / IX_V layout in fluid_physics).
             const float u_center = 0.5f * (u[(size_t)i * u_stride + j] + u[(size_t)(i + 1) * u_stride + j]);
             const float v_center = 0.5f * (v[(size_t)i * v_stride + j] + v[(size_t)i * v_stride + (j + 1)]);
@@ -257,8 +243,7 @@ void graphics::update_arrows(const float* u, const float* v, const int width, co
 
             // Arrowhead — two wing line segments
             const float len = std::sqrt(delta_x * delta_x + delta_y * delta_y);
-            if (len > min_arrow_length)
-            {
+            if (len > min_arrow_length) {
                 const float inv_len = 1.0f / len;
                 const float dir_x = delta_x * inv_len;
                 const float dir_y = delta_y * inv_len;
@@ -284,11 +269,8 @@ void graphics::update_arrows(const float* u, const float* v, const int width, co
                 vertices.push_back(tip_y);
                 vertices.push_back(wing_b_x);
                 vertices.push_back(wing_b_y);
-            }
-            else
-            {
-                for (int k = 0; k < 4; ++k)
-                {
+            } else {
+                for (int k = 0; k < 4; ++k) {
                     vertices.push_back(tip_x);
                     vertices.push_back(tip_y);
                 }
@@ -300,13 +282,10 @@ void graphics::update_arrows(const float* u, const float* v, const int width, co
     const int byte_size = (int)(vertices.size() * sizeof(float));
 
     glBindBuffer(GL_ARRAY_BUFFER, arrow_vbo);
-    if (vert_count > arrow_vbo_capacity)
-    {
+    if (vert_count > arrow_vbo_capacity) {
         glBufferData(GL_ARRAY_BUFFER, byte_size, vertices.data(), GL_DYNAMIC_DRAW);
         arrow_vbo_capacity = vert_count;
-    }
-    else
-    {
+    } else {
         glBufferSubData(GL_ARRAY_BUFFER, 0, byte_size, vertices.data());
     }
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -314,15 +293,13 @@ void graphics::update_arrows(const float* u, const float* v, const int width, co
     arrow_vert_count = vert_count;
 }
 
-void graphics::begin_ui() const
-{
+void graphics::begin_ui() const {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 }
 
-void graphics::draw(const visual_mode mode) const
-{
+void graphics::draw(const visual_mode mode) const {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
@@ -333,8 +310,7 @@ void graphics::draw(const visual_mode mode) const
     const bool draw_arrows = (mode == visual_mode::velocity_vectors_only ||
                               mode == visual_mode::field_plus_vectors);
 
-    if (draw_field && field_texture != 0)
-    {
+    if (draw_field && field_texture != 0) {
         glUseProgram(field_shader);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, field_texture);
@@ -347,8 +323,7 @@ void graphics::draw(const visual_mode mode) const
         glBindVertexArray(0);
     }
 
-    if (draw_arrows && arrow_vert_count > 0)
-    {
+    if (draw_arrows && arrow_vert_count > 0) {
         glUseProgram(arrow_shader);
         glBindVertexArray(arrow_vao);
         glDrawArrays(GL_LINES, 0, arrow_vert_count);
