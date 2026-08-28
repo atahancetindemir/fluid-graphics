@@ -23,7 +23,8 @@ public:
     [[nodiscard]] GLFWwindow* window() const { return glfw_window; }
 
     void update_field(const float* data, int width, int height, float range_min, float range_max);
-    void update_arrows(const float* u, const float* v, int width, int height, int stride, float scale);
+    // Takes cell-centered velocity (num_cells floats each), not the staggered field.
+    void update_arrows(const float* u_centered, const float* v_centered, int width, int height, int stride, float scale);
     void begin_ui() const;
     void draw(ViewMode mode) const;
 

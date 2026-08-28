@@ -52,6 +52,10 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div);
 // Computes the cell-centered velocity magnitude for every cell into dest (num_cells floats).
 void fluid_velocity_magnitude(const FluidContext* ctx, float* dest);
 
+// Interpolates the staggered velocity field onto cell centers, writing num_cells
+// floats into each of u_center and v_center.
+void fluid_velocity_centered(const FluidContext* ctx, float* u_center, float* v_center);
+
 // Start the simulation by creating a context with given parameters.
 FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters, float threshold);
 

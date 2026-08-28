@@ -211,20 +211,16 @@ void Renderer::create_field_texture(const int width, const int height) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void Renderer::update_arrows(const float* u, const float* v, const int width, const int height, int stride, const float scale) {
+void Renderer::update_arrows(const float* u_centered, const float* v_centered, const int width, const int height, int stride, const float scale) {
     if (stride < 1) stride = 1;
 
     std::vector<float> vertices;
     vertices.reserve(((size_t)(width / stride) * (height / stride)) * 12);
 
-    const size_t u_stride = (size_t)height;
-    const size_t v_stride = (size_t)(height + 1);
-
     for (int i = stride / 2; i < width; i += stride) {
         for (int j = stride / 2; j < height; j += stride) {
-            // Cell-centered velocity from staggered grid (matches IX_U / IX_V layout in fluid_physics).
-            const float u_center = 0.5f * (u[(size_t)i * u_stride + j] + u[(size_t)(i + 1) * u_stride + j]);
-            const float v_center = 0.5f * (v[(size_t)i * v_stride + j] + v[(size_t)i * v_stride + (j + 1)]);
+            const float u_center = u_centered[(size_t)i * (size_t)height + j];
+            const float v_center = v_centered[(size_t)i * (size_t)height + j];
 
             // After the UV swap in field.frag, screen-X = sim-i and screen-Y = sim-j.
             const float base_x = 2.0f * ((float)i + 0.5f) / (float)width - 1.0f;

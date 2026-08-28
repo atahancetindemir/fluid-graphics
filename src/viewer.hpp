@@ -76,8 +76,10 @@ private:
     Scenario scenario{};
     ViewerControls controls{};
 
-    // Scratch buffer for the velocity magnitude view, sized once with the grid.
+    // Scratch buffers for the views that need derived fields, sized once with the grid.
     std::vector<float> velocity_magnitudes;
+    std::vector<float> u_centered;
+    std::vector<float> v_centered;
 
     double last_time = 0.0;
     double title_timer = 0.0;

@@ -109,6 +109,8 @@ Viewer::Viewer(Renderer& renderer) : renderer(renderer) {
     restart(true);
 
     velocity_magnitudes.assign((size_t)ctx->num_cells, 0.0f);
+    u_centered.assign((size_t)ctx->num_cells, 0.0f);
+    v_centered.assign((size_t)ctx->num_cells, 0.0f);
     last_time = glfwGetTime();
 }
 
@@ -267,8 +269,11 @@ void Viewer::present() {
             break;
     }
 
-    if (controls.mode == ViewMode::VECTORS || controls.mode == ViewMode::FIELD_AND_VECTORS)
-        renderer.update_arrows(ctx->u, ctx->v, width, height, controls.arrow_stride, controls.arrow_scale);
+    if (controls.mode == ViewMode::VECTORS || controls.mode == ViewMode::FIELD_AND_VECTORS) {
+        fluid_velocity_centered(ctx, u_centered.data(), v_centered.data());
+        renderer.update_arrows(u_centered.data(), v_centered.data(), width, height,
+                               controls.arrow_stride, controls.arrow_scale);
+    }
 
     renderer.draw(controls.mode);
 }

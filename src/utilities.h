@@ -94,6 +94,16 @@ static inline float apply_v_laplacian(const FluidContext* ctx, const float* v, s
     return left + right + bottom + top - 4.0f * center;
 }
 
+// Cell-centered horizontal velocity from the staggered MAC grid.
+static inline float sample_u_centered(const FluidContext* ctx, const float* u, size_t i, size_t j) {
+    return 0.5f * (u[IX_U(ctx, i, j)] + u[IX_U(ctx, i + 1, j)]);
+}
+
+// Cell-centered vertical velocity from the staggered MAC grid.
+static inline float sample_v_centered(const FluidContext* ctx, const float* v, size_t i, size_t j) {
+    return 0.5f * (v[IX_V(ctx, i, j)] + v[IX_V(ctx, i, j + 1)]);
+}
+
 // One explicit diffusion step for a scalar field: u_new = u + a * Laplacian(u).
 static inline float compute_explicit_scalar_update(const FluidContext* ctx, const float* src, float a, size_t i, size_t j) {
     return src[IX(ctx, i, j)] + a * apply_scalar_laplacian(ctx, src, i, j);

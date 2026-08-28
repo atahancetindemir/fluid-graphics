@@ -629,9 +629,20 @@ void fluid_velocity_magnitude(const FluidContext* ctx, float* dest) {
     #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < ctx->x; i++) {
         for (size_t j = 0; j < ctx->y; j++) {
-            float u_center = 0.5f * (ctx->u[IX_U(ctx, i, j)] + ctx->u[IX_U(ctx, i + 1, j)]);
-            float v_center = 0.5f * (ctx->v[IX_V(ctx, i, j)] + ctx->v[IX_V(ctx, i, j + 1)]);
+            float u_center = sample_u_centered(ctx, ctx->u, i, j);
+            float v_center = sample_v_centered(ctx, ctx->v, i, j);
             dest[IX(ctx, i, j)] = sqrtf(u_center * u_center + v_center * v_center);
+        }
+    }
+}
+
+void fluid_velocity_centered(const FluidContext* ctx, float* u_center, float* v_center) {
+
+    #pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < ctx->x; i++) {
+        for (size_t j = 0; j < ctx->y; j++) {
+            u_center[IX(ctx, i, j)] = sample_u_centered(ctx, ctx->u, i, j);
+            v_center[IX(ctx, i, j)] = sample_v_centered(ctx, ctx->v, i, j);
         }
     }
 }
