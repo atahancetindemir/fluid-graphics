@@ -19,7 +19,7 @@ constexpr float default_dx = 0.1f;
 constexpr float default_density = 1.0f;
 constexpr float default_viscosity = 0.001f;
 constexpr int default_poisson_iter = 100;
-constexpr float default_threshold = 1e-4f;
+constexpr float default_threshold = 1e-5f;
 
 constexpr int min_poisson_iter = 10;
 

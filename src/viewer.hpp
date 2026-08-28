@@ -18,9 +18,9 @@ constexpr const char* window_title = "Fluid Simulation";
 // Everything the control panel edits: what to draw, which scenario and solver to
 // run, and the two one-shot requests the panel raises for the next frame.
 struct ViewerControls {
-    ViewMode mode = ViewMode::SMOKE;
+    ViewMode mode = ViewMode::VELOCITY_MAGNITUDE;
     ScenarioType scenario_type = KARMAN_VORTEX;
-    int substeps_per_frame = 5;
+    int substeps_per_frame = 1;
     int arrow_stride = 8;
     float arrow_scale = 0.04f;
     bool auto_omega = true;
@@ -30,8 +30,8 @@ struct ViewerControls {
 
     // Indices into the solver and preconditioner option tables in viewer.cpp.
     // These stay menu selections; they are translated to solver types at the table.
-    int solver_index = 0;
-    int preconditioner_index = 1;
+    int solver_index = 1;
+    int preconditioner_index = 0;
 };
 
 /**
