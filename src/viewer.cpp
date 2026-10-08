@@ -206,59 +206,68 @@ void Viewer::draw_info_overlay() {
 void Viewer::draw_controls() {
     ImGui::Begin("Controls");
 
-    ImGui::Text("Visualization");
-    int mode = (int)controls.mode;
-    ImGui::RadioButton("Smoke", &mode, (int)ViewMode::SMOKE);
-    ImGui::RadioButton("Pressure", &mode, (int)ViewMode::PRESSURE);
-    ImGui::RadioButton("Velocity Mag", &mode, (int)ViewMode::VELOCITY_MAGNITUDE);
-    ImGui::RadioButton("Vectors Only", &mode, (int)ViewMode::VECTORS);
-    ImGui::RadioButton("Field + Vectors", &mode, (int)ViewMode::FIELD_AND_VECTORS);
-    controls.mode = (ViewMode)mode;
-    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Visualization", ImGuiTreeNodeFlags_DefaultOpen)) {
+        int mode = (int)controls.mode;
+        ImGui::RadioButton("Smoke", &mode, (int)ViewMode::SMOKE);
+        ImGui::RadioButton("Pressure", &mode, (int)ViewMode::PRESSURE);
+        ImGui::RadioButton("Velocity Mag", &mode, (int)ViewMode::VELOCITY_MAGNITUDE);
+        ImGui::RadioButton("Vectors Only", &mode, (int)ViewMode::VECTORS);
+        ImGui::RadioButton("Field + Vectors", &mode, (int)ViewMode::FIELD_AND_VECTORS);
+        controls.mode = (ViewMode)mode;
 
-    // The scenario is held as a domain type rather than a menu index, because the
-    // solver API and the obstacle panel below both read it.
-    int scenario_index = 0;
-    for (int i = 0; i < IM_ARRAYSIZE(scenario_options); ++i) {
-        if (scenario_options[i].type == controls.scenario_type)
-            scenario_index = i;
+        const bool vectors_shown = (controls.mode == ViewMode::VECTORS ||
+                                    controls.mode == ViewMode::FIELD_AND_VECTORS);
+        ImGui::BeginDisabled(!vectors_shown);
+        ImGui::SliderInt("Arrow Stride", &controls.arrow_stride, 2, 32);
+        ImGui::SliderFloat("Arrow Scale", &controls.arrow_scale, 0.001f, 0.2f, "%.4f", ImGuiSliderFlags_Logarithmic);
+        ImGui::EndDisabled();
+        ImGui::SliderInt("Substeps/Frame", &controls.substeps_per_frame, 1, 50);
     }
-    if (option_combo("Scenario", scenario_index, scenario_options)) {
-        controls.scenario_type = scenario_options[scenario_index].type;
-        controls.request_reload = true;
+
+    if (ImGui::CollapsingHeader("Scenario##header", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // The scenario is held as a domain type rather than a menu index, because the
+        // solver API and the obstacle panel below both read it.
+        int scenario_index = 0;
+        for (int i = 0; i < IM_ARRAYSIZE(scenario_options); ++i) {
+            if (scenario_options[i].type == controls.scenario_type)
+                scenario_index = i;
+        }
+        if (option_combo("Scenario", scenario_index, scenario_options)) {
+            controls.scenario_type = scenario_options[scenario_index].type;
+            controls.request_reload = true;
+        }
     }
-    ImGui::Separator();
 
-    ImGui::Text("Solver");
-    if (option_combo("Pressure Solver", controls.solver_index, solver_options))
-        ctx->pressure_solver = solver_options[controls.solver_index].solve;
-    if (option_combo("Preconditioner", controls.preconditioner_index, precond_options))
-        fluid_set_preconditioner(ctx, precond_options[controls.preconditioner_index].type);
-    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Solver", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (option_combo("Pressure Solver", controls.solver_index, solver_options))
+            ctx->pressure_solver = solver_options[controls.solver_index].solve;
 
-    ImGui::Text("Parameters");
-    ImGui::SliderFloat("Inlet Velocity", &params.inlet_velocity, 0.0f, 5.0f);
-    ImGui::SliderFloat("Viscosity", &ctx->visc, 0.0001f, 0.1f, "%.5f", ImGuiSliderFlags_Logarithmic);
-    ImGui::SliderFloat("dt", &ctx->dt, 0.001f, 0.05f, "%.4f");
+        // Read after the combo, so a solver picked this frame already sets what is enabled below.
+        const SolverOption& solver = solver_options[controls.solver_index];
+        ImGui::BeginDisabled(!solver.uses_preconditioner);
+        if (option_combo("Preconditioner", controls.preconditioner_index, precond_options))
+            fluid_set_preconditioner(ctx, precond_options[controls.preconditioner_index].type);
+        ImGui::EndDisabled();
 
-    const bool omega_used = solver_options[controls.solver_index].uses_omega;
-    ImGui::BeginDisabled(!omega_used);
-    ImGui::Checkbox("Auto Omega", &controls.auto_omega);
-    if (controls.auto_omega)
-        ImGui::Text("Omega: %.4f (auto)", ctx->omega);
-    else
-        ImGui::SliderFloat("Omega", &ctx->omega, 1.0f, 1.99f);
-    ImGui::EndDisabled();
-    if (!omega_used)
-        ImGui::TextDisabled("PCG does not use omega.");
+        ImGui::BeginDisabled(!solver.uses_omega);
+        ImGui::Checkbox("Auto Omega", &controls.auto_omega);
+        if (controls.auto_omega)
+            ImGui::Text("Omega: %.4f (auto)", ctx->omega);
+        else
+            ImGui::SliderFloat("Omega", &ctx->omega, 1.0f, 1.99f);
+        ImGui::EndDisabled();
+        if (!solver.uses_omega)
+            ImGui::TextDisabled("%s does not use omega.", solver.label);
+    }
 
-    ImGui::SliderInt("Substeps/Frame", &controls.substeps_per_frame, 1, 50);
-    ImGui::SliderInt("Arrow Stride", &controls.arrow_stride, 2, 32);
-    ImGui::SliderFloat("Arrow Scale", &controls.arrow_scale, 0.001f, 0.2f, "%.4f", ImGuiSliderFlags_Logarithmic);
-    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::SliderFloat("Inlet Velocity", &params.inlet_velocity, 0.0f, 5.0f);
+        ImGui::SliderFloat("Viscosity", &ctx->visc, 0.0001f, 0.1f, "%.5f", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("dt", &ctx->dt, 0.001f, 0.05f, "%.4f");
+    }
 
-    if (controls.scenario_type == KARMAN_VORTEX) {
-        ImGui::Text("Karman Obstacle");
+    if (controls.scenario_type == KARMAN_VORTEX &&
+        ImGui::CollapsingHeader("Karman Obstacle", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat("Obstacle X", &params.obstacle_x, 1.0f, (float)ctx->x - 2.0f);
         ImGui::SliderFloat("Obstacle Y", &params.obstacle_y, 1.0f, (float)ctx->y - 2.0f);
         int radius = (int)params.obstacle_radius;
@@ -266,9 +275,9 @@ void Viewer::draw_controls() {
             params.obstacle_radius = (size_t)radius;
         if (ImGui::Button("Rebuild Solids"))
             controls.request_restart = true;
-        ImGui::Separator();
     }
 
+    ImGui::Separator();
     if (ImGui::Button("Reset"))
         controls.request_restart = true;
 
