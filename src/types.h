@@ -16,6 +16,16 @@ typedef struct {
     float* z;                       // Preconditioned residual
 } PcgWorkspace;
 
+// Diagnostics of the last pressure solve
+typedef struct {
+    size_t iterations;              // Iterations the solve ran
+    int converged;                  // 1 if the threshold stopped the solve, 0 if the iteration cap did
+    float delta_p;                  // Largest pressure change in the final iteration
+    float residual;                 // True residual of the final pressure, max |Lap(p) - div * cp|
+    float rhs;                      // Largest right-hand side term, max |div * cp|
+    double solve_ms;                // Wall time of the solve, residual check excluded
+} SolveStats;
+
 // Fluid Simulation Context
 struct FluidContext {
 
@@ -50,6 +60,9 @@ struct FluidContext {
     float* v_prev;                  // Ping-pong buffer for vertical velocity
     float* smoke_prev;              // Ping-pong buffer for smoke
     PcgWorkspace cg;                // Conjugate Gradient vectors
+
+    // Diagnostics
+    SolveStats stats;               // Last pressure solve
 };
 
 // Scenario Parameters

@@ -357,6 +357,29 @@ void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
     }
 }
 
+// Fills ctx->stats for the solve that just finished and prints it in debug builds.
+static void record_solve_stats(FluidContext* ctx, const char* tag, const float* p, const float* div,
+                               size_t iterations, int converged, float delta_p, double start_time) {
+    SolveStats* stats = &ctx->stats;
+    stats->solve_ms = (GET_TIME_SEC() - start_time) * 1000.0;
+    stats->iterations = iterations;
+    stats->converged = converged;
+    stats->delta_p = delta_p;
+    stats->residual = calculate_max_residual(ctx, p, div);
+
+    float max_div = 0.0f;
+    #pragma omp parallel for reduction(max:max_div)
+    for (size_t k = 0; k < ctx->num_cells; k++)
+        max_div = MAX(max_div, fabsf(div[k]));
+    stats->rhs = max_div * (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
+
+#ifdef DEBUG
+    solver_report(tag, converged, iterations, delta_p, stats->residual, stats->solve_ms);
+#else
+    UNUSED(tag);
+#endif // DEBUG
+}
+
 // Stride-2 access wastes 50% of every cache line
 // The stride-1 + branch version was considered but performs the same since
 // compute_poisson_update is a gather (4 neighbor reads), GCC won't vectorize
@@ -366,9 +389,10 @@ void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
 void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
-#ifdef DEBUG
     double start_time = GET_TIME_SEC();
-#endif // DEBUG
+    size_t iterations = 0;
+    int converged = 0;
+    float max_error = 0.0f;
 
     for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
         // Red pass - no error tracking needed here
@@ -384,7 +408,7 @@ void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
         }
 
         // Black pass - track error with OMP reduction
-        float max_error = 0.0f;
+        max_error = 0.0f;
         #pragma omp parallel for schedule(static) reduction(max:max_error)
         for (size_t i = 1; i < ctx->x - 1; i++) {
             size_t j_start = (i % 2 != 0) ? 2 : 1;
@@ -400,30 +424,26 @@ void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
             }
         }
 
+        iterations = iter + 1;
         if (max_error < ctx->threshold) {
-#ifdef DEBUG
-            SOLVER_REPORT("RBGS", 1, iter + 1, max_error);
-#endif // DEBUG
+            converged = 1;
             break; // Convergence check
         }
-#ifdef DEBUG
-        // Max Iteration Check
-        if (iter == ctx->poisson_iter - 1) {
-            SOLVER_REPORT("RBGS", 0, ctx->poisson_iter, max_error);
-        }
-#endif // DEBUG
     }
+
+    record_solve_stats(ctx, "RBGS", p, div, iterations, converged, max_error, start_time);
 }
 
 void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
-#ifdef DEBUG
     double start_time = GET_TIME_SEC();
-#endif // DEBUG
+    size_t iterations = 0;
+    int converged = 0;
+    float max_error = 0.0f;
 
     for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
-        float max_error = 0.0f;
+        max_error = 0.0f;
 
         for (size_t i = 1; i < ctx->x - 1; i++) {
             for (size_t j = 1; j < ctx->y - 1; j++) {
@@ -437,19 +457,14 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
             }
         }
 
+        iterations = iter + 1;
         if (max_error < ctx->threshold) {
-#ifdef DEBUG
-            SOLVER_REPORT("SOR", 1, iter + 1, max_error);
-#endif // DEBUG
+            converged = 1;
             break; // Convergence check
         }
-#ifdef DEBUG
-        // Max Iteration Check
-        if (iter == ctx->poisson_iter - 1) {
-            SOLVER_REPORT("SOR", 0, ctx->poisson_iter, max_error);
-        }
-#endif
     }
+
+    record_solve_stats(ctx, "SOR", p, div, iterations, converged, max_error, start_time);
 }
 
 void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
@@ -461,9 +476,10 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
 
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
-#ifdef DEBUG
     double start_time = GET_TIME_SEC();
-#endif
+    size_t iterations = 0;
+    int converged = 0;
+    float max_change = 0.0f;
 
     #pragma omp parallel for schedule(static)
     for (size_t i = 1; i < ctx->x - 1; i++) {
@@ -500,7 +516,7 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
 
         float alpha = delta_new / dot(d, q, N);
 
-        float max_change = 0.0f;
+        max_change = 0.0f;
         #pragma omp parallel for simd schedule(static) reduction(max:max_change)
         for (size_t k = 0; k < N; k++) {
             float change = alpha * d[k];
@@ -509,17 +525,11 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
             max_change = MAX(max_change, fabsf(change));
         }
 
+        iterations = iter + 1;
         if (max_change < ctx->threshold) {
-#ifdef DEBUG
-            SOLVER_REPORT("PCG", 1, iter + 1, max_change);
-#endif
+            converged = 1;
             break;
         }
-#ifdef DEBUG
-        if (iter == ctx->poisson_iter - 1) {
-            SOLVER_REPORT("PCG", 0, ctx->poisson_iter, max_change);
-        }
-#endif
 
         ctx->precondition(ctx, z, r);        
 
@@ -531,6 +541,8 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
         for (size_t k = 0; k < N; k++)
             d[k] = z[k] + beta * d[k];
     }
+
+    record_solve_stats(ctx, "PCG", p, div, iterations, converged, max_change, start_time);
 }
 
 FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters, float threshold) {
@@ -591,6 +603,8 @@ void fluid_reset_context(FluidContext* ctx) {
     memset(ctx->cg.d, 0, ctx->num_cells * sizeof(float));
     memset(ctx->cg.q, 0, ctx->num_cells * sizeof(float));
     memset(ctx->cg.z, 0, ctx->num_cells * sizeof(float));
+
+    memset(&ctx->stats, 0, sizeof(ctx->stats));
 }
 
 float fluid_optimal_omega(const FluidContext* ctx) {

@@ -58,12 +58,6 @@
         } \
     } while(0)
 
-#define SOLVER_REPORT(tag, converged, iters, delta) \
-    do { \
-        double elapsed_ms = (GET_TIME_SEC() - start_time) * 1000.0; \
-        solver_report((tag), (converged), (iters), (delta), calculate_max_residual(ctx, p, div), elapsed_ms); \
-    } while(0)
-
 // Fetch neighbors with Neumann BC handling for cell-centered scalar fields.
 static inline float apply_scalar_laplacian(const FluidContext* ctx, const float* src, size_t i, size_t j) {
     float center = src[IX(ctx, i, j)];
