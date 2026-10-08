@@ -11,6 +11,9 @@
 #include "utilities.h"
 #include "scenarios.h"
 
+// Gauss-Seidel sweeps for implicit diffusion.
+#define DIFFUSE_ITER 20
+
 /*
 MAC GRID (STAGGERED GRID) MEMORY & SPATIAL LAYOUT
 
@@ -110,7 +113,7 @@ void diffuse_velocity_implicit(FluidContext* ctx, float* u_dest, float* v_dest, 
     mat_cpy(u_dest, (float*)u_src, ctx->x + 1, ctx->y);
     mat_cpy(v_dest, (float*)v_src, ctx->x, ctx->y + 1);
 
-    for (size_t iter = 0; iter < ctx->diffuse_iter; iter++) {
+    for (size_t iter = 0; iter < DIFFUSE_ITER; iter++) {
 
         // u (horizontal) velocity diffusion
         for (size_t i = 1; i < ctx->x; i++) {
@@ -159,7 +162,7 @@ void diffuse_scalar_implicit(FluidContext* ctx, float* dest, const float* src, f
 
     mat_cpy(dest, (float*)src, ctx->x, ctx->y);
 
-    for (size_t iter = 0; iter < ctx->diffuse_iter; iter++) {
+    for (size_t iter = 0; iter < DIFFUSE_ITER; iter++) {
         for (size_t i = 1; i < ctx->x - 1; i++) {
             for (size_t j = 1; j < ctx->y - 1; j++) {
                 if (ctx->solid[IX(ctx, i, j)]) {
@@ -451,10 +454,10 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
 
 void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
     size_t N = ctx->num_cells;
-    float *r = ctx->cg_r;
-    float *d = ctx->cg_d;
-    float *q = ctx->cg_q;
-    float *z = ctx->cg_z;
+    float* r = ctx->cg.r;
+    float* d = ctx->cg.d;
+    float* q = ctx->cg.q;
+    float* z = ctx->cg.z;
 
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
@@ -542,7 +545,6 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float d
     ctx->dens= dens;
     ctx->visc = visc;
     ctx->poisson_iter = iters;
-    ctx->diffuse_iter = 20;
     ctx->threshold = threshold;
 
     ctx->u = (float*)malloc((res_x + 1) * res_y * sizeof(float));
@@ -556,10 +558,10 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float d
     ctx->v_prev = (float*)malloc(res_x * (res_y + 1) * sizeof(float));
     ctx->smoke_prev = (float*)malloc(ctx->num_cells * sizeof(float));
 
-    ctx->cg_r = (float*)malloc(ctx->num_cells * sizeof(float));
-    ctx->cg_d = (float*)malloc(ctx->num_cells * sizeof(float));
-    ctx->cg_q = (float*)malloc(ctx->num_cells * sizeof(float));
-    ctx->cg_z = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->cg.r = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->cg.d = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->cg.q = (float*)malloc(ctx->num_cells * sizeof(float));
+    ctx->cg.z = (float*)malloc(ctx->num_cells * sizeof(float));
 
     // Which fields get zeroed lives in exactly one place: fluid_reset_context.
     fluid_reset_context(ctx);
@@ -584,10 +586,11 @@ void fluid_reset_context(FluidContext* ctx) {
     memset(ctx->v_prev, 0, v_count * sizeof(float));
     memset(ctx->smoke_prev, 0, ctx->num_cells * sizeof(float));
 
-    memset(ctx->cg_r, 0, ctx->num_cells * sizeof(float));
-    memset(ctx->cg_d, 0, ctx->num_cells * sizeof(float));
-    memset(ctx->cg_q, 0, ctx->num_cells * sizeof(float));
-    memset(ctx->cg_z, 0, ctx->num_cells * sizeof(float));
+    // PCG only writes interior cells, so the boundary entries must start at zero.
+    memset(ctx->cg.r, 0, ctx->num_cells * sizeof(float));
+    memset(ctx->cg.d, 0, ctx->num_cells * sizeof(float));
+    memset(ctx->cg.q, 0, ctx->num_cells * sizeof(float));
+    memset(ctx->cg.z, 0, ctx->num_cells * sizeof(float));
 }
 
 float fluid_optimal_omega(const FluidContext* ctx) {
@@ -601,12 +604,11 @@ float fluid_optimal_omega(const FluidContext* ctx) {
     return omega;
 }
 
-void fluid_update_reynolds(FluidContext* ctx, ScenarioParams p) {
+float fluid_reynolds(const FluidContext* ctx, ScenarioParams p) {
     if (ctx->visc > 0.0f) { // avoid zero-divison
-        ctx->reynolds = (ctx->dens * p.inlet_velocity * p.length_scale ) / ctx->visc;
-    } else { // clamp
-        ctx->reynolds = 0.0f;
+        return (ctx->dens * p.inlet_velocity * p.length_scale) / ctx->visc;
     }
+    return 0.0f; // clamp
 }
 
 void fluid_set_preconditioner(FluidContext* ctx, PrecondType precondition) {
@@ -647,22 +649,11 @@ void fluid_velocity_centered(const FluidContext* ctx, float* u_center, float* v_
     }
 }
 
-void fluid_setup_physics(FluidContext* ctx, ScenarioParams p, PressureSolver pressure_solver, PrecondType precondition) {
+void fluid_setup_physics(FluidContext* ctx, PressureSolver pressure_solver, PrecondType precondition) {
     ctx->pressure_solver = pressure_solver;
 
     fluid_set_preconditioner(ctx, precondition);
-    fluid_update_reynolds(ctx, p);
-
-    // Find optimum omega for different scenarios
-    if (p.target_omega <= 0.0f) {
-        ctx->omega = fluid_optimal_omega(ctx);
-    } else if (p.target_omega >= 1.99f) {
-        ctx->omega = 1.99f; // Clamp for upperbound
-    } else if (p.target_omega < 1.0f) {
-        ctx->omega = 1.0f;  // Back to gauss-seidel
-    } else {
-        ctx->omega = p.target_omega;
-    }
+    ctx->omega = fluid_optimal_omega(ctx);
 }
 
 void fluid_destroy_context(FluidContext* ctx) {
@@ -678,10 +669,10 @@ void fluid_destroy_context(FluidContext* ctx) {
     free(ctx->v_prev);
     free(ctx->smoke_prev);
 
-    free(ctx->cg_r);
-    free(ctx->cg_d);
-    free(ctx->cg_q);
-    free(ctx->cg_z);
+    free(ctx->cg.r);
+    free(ctx->cg.d);
+    free(ctx->cg.q);
+    free(ctx->cg.z);
 
     free(ctx);
 }

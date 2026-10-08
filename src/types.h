@@ -8,6 +8,14 @@ typedef struct FluidContext FluidContext;
 typedef void (*PressureSolver)(FluidContext* ctx, float* p, const float* div);
 typedef void (*Preconditioner)(FluidContext* ctx, float* z, const float* r);
 
+// Preconditioned Conjugate Gradient workspace
+typedef struct {
+    float* r;                       // Residual
+    float* d;                       // Search direction
+    float* q;                       // Laplacian of the search direction
+    float* z;                       // Preconditioned residual
+} PcgWorkspace;
+
 // Fluid Simulation Context
 struct FluidContext {
 
@@ -21,44 +29,33 @@ struct FluidContext {
     float dx;                       // Grid size in meters
     float dens;                     // Density of the fluid
     float visc;                     // Dynamic viscosity of the fluid
-    float reynolds;                 // Reynolds number
+
+    // Solver Settings
     float omega;                    // Over-relaxation factor for pressure solver
     size_t poisson_iter;            // Iteration count for Poisson solver
-    size_t diffuse_iter;            // Iteration count for diffusion solver
     float threshold;                // Convergence threshold for iterative solvers
     PressureSolver pressure_solver; // Function pointer to the selected pressure solver
+    Preconditioner precondition;    // Function pointer to the selected preconditioner
 
-    // Vector Fields
+    // State
     float* u;                       // Horizontal velocity
     float* v;                       // Vertical velocity
-    
-    // Solver Fields
-    float* p;                       // Pressure
-    float* div;                     // Divergence
-    
-    // Transport Fields
+    float* p;                       // Pressure, also the warm start of the next solve
     float* smoke;                   // Smoke
-    
-    // Geometry
     uint8_t* solid;                 // Boundary Mask
 
-    // Previous State
-    float* u_prev;                  // Previous horizontal velocity
-    float* v_prev;                  // Previous vertical velocity
-    float* smoke_prev;              // Previous smoke
-
-    Preconditioner precondition;    // Function pointer to the selected preconditioner
-    float* cg_r;                    // Residual for Conjugate Gradient
-    float* cg_d;                    // Direction for Conjugate Gradient
-    float* cg_q;                    // Temporary vector for Conjugate Gradient
-    float* cg_z;                    // Preconditioner vector for Conjugate Gradient
+    // Workspace
+    float* div;                     // Divergence, the right-hand side of the pressure solve
+    float* u_prev;                  // Ping-pong buffer for horizontal velocity
+    float* v_prev;                  // Ping-pong buffer for vertical velocity
+    float* smoke_prev;              // Ping-pong buffer for smoke
+    PcgWorkspace cg;                // Conjugate Gradient vectors
 };
 
 // Scenario Parameters
 typedef struct {
     float inlet_velocity;           // Characteristic velocity for the scenario
     float length_scale;             // Characteristic length scale for the scenario
-    float target_omega;             // Target over-relaxation factor for the pressure solver
 
     float obstacle_x;               // X-coordinate of the center of the obstacle
     float obstacle_y;               // Y-coordinate of the center of the obstacle

@@ -31,9 +31,6 @@ void scenario_update_derived(ScenarioType type, const FluidContext* ctx, Scenari
 Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) {
     Scenario s;
 
-    // Default for all scenarios
-    p->target_omega = 0.0f;
-
     switch (type) {
         case LID_DRIVEN:
         p->inlet_velocity = 1.0f;
@@ -170,8 +167,6 @@ void apply_boundaries_karman_vortex(FluidContext* ctx, ScenarioParams p) {
 // NACA 2412 Airfoil
 
 void init_airfoil(FluidContext* ctx, ScenarioParams p) {
-    UNUSED(p);
-    
     // Clear domain and reset smoke
     for (size_t i = 0; i < ctx->x * ctx->y; i++) {
         ctx->solid[i] = 0;
@@ -179,7 +174,7 @@ void init_airfoil(FluidContext* ctx, ScenarioParams p) {
     }
 
     // Airfoil dimensions and position
-    float chord = ctx->x * ctx->dx * 0.4f; 
+    float chord = p.chord_length;
     float start_x = ctx->x * ctx->dx * 0.2f; 
     float center_y = ctx->y * ctx->dx * 0.5f;
 

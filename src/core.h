@@ -65,21 +65,20 @@ void fluid_reset_context(FluidContext* ctx);
 // Returns the theoretically optimal over-relaxation factor for the grid, clamped to [1.0, 1.99].
 float fluid_optimal_omega(const FluidContext* ctx);
 
-// Recomputes the Reynolds number from the current viscosity, density and scenario parameters.
-void fluid_update_reynolds(FluidContext* ctx, ScenarioParams p);
+// Returns the Reynolds number from the current viscosity, density and scenario parameters.
+float fluid_reynolds(const FluidContext* ctx, ScenarioParams p);
 
 // Points the context at the preconditioner implementation matching the given type.
 void fluid_set_preconditioner(FluidContext* ctx, PrecondType precondition);
 
 /**
- * @brief Configures the physics parameters of the fluid simulation context, including the pressure solver and preconditioner.
+ * @brief Configures the solver side of the context: the pressure solver, the preconditioner and the optimal over-relaxation factor.
  * @param ctx Pointer to the fluid context to configure.
- * @param p Scenario-specific parameters that may influence physics settings such as Reynolds number and optimal omega
  * @param pressure_solver Function pointer to the pressure solver to use (e.g., solve_pressure_pcg, solve_pressure_rbgs, solve_pressure_sor).
- * @param precondition Function pointer to the preconditioner to use for iterative solvers (
+ * @param precondition Preconditioner type to use for the Conjugate Gradient solver (
  * e.g., PRECOND_IDENTITY, PRECOND_JACOBI, PRECOND_MULTIGRID).
  */
-void fluid_setup_physics(FluidContext* ctx, ScenarioParams p, PressureSolver pressure_solver, PrecondType precondition);
+void fluid_setup_physics(FluidContext* ctx, PressureSolver pressure_solver, PrecondType precondition);
 
 // Clean up the context and free memory.
 void fluid_destroy_context(FluidContext* ctx);

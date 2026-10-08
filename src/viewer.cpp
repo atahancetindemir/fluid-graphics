@@ -125,7 +125,7 @@ void Viewer::restart(const bool load_defaults) {
         scenario_update_derived(controls.scenario_type, ctx, &params);
 
     fluid_reset_context(ctx);
-    fluid_setup_physics(ctx, params, solver_options[controls.solver_index].solve,
+    fluid_setup_physics(ctx, solver_options[controls.solver_index].solve,
                         precond_options[controls.preconditioner_index].type);
     scenario.init(ctx, params);
 }
@@ -145,9 +145,6 @@ void Viewer::advance_simulation() {
     if (controls.auto_omega)
         ctx->omega = fluid_optimal_omega(ctx);
 
-    // Viscosity and inlet velocity are live, so the reported Reynolds has to follow them.
-    fluid_update_reynolds(ctx, params);
-
     for (int s = 0; s < controls.substeps_per_frame; ++s)
         fluid_step(ctx, params, scenario);
 }
@@ -159,7 +156,8 @@ void Viewer::draw_controls() {
 
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::Text("%.1f FPS  (%.2f ms/frame)", io.Framerate, 1000.0f / io.Framerate);
-    ImGui::Text("Reynolds: %.2f", ctx->reynolds);
+    // Viscosity and inlet velocity are live, so the reported Reynolds is computed every frame.
+    ImGui::Text("Reynolds: %.2f", fluid_reynolds(ctx, params));
     ImGui::Text("OpenMP threads: %d", omp_get_max_threads());
     ImGui::Separator();
 
