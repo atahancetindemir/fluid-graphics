@@ -593,6 +593,8 @@ void fluid_reset_context(FluidContext* ctx) {
     memset(ctx->div, 0, ctx->num_cells * sizeof(float));
     memset(ctx->smoke, 0, ctx->num_cells * sizeof(float));
     memset(ctx->solid, 0, ctx->num_cells * sizeof(uint8_t));
+    ctx->step = 0;
+    ctx->time = 0.0;
 
     memset(ctx->u_prev, 0, u_count * sizeof(float));
     memset(ctx->v_prev, 0, v_count * sizeof(float));
@@ -733,6 +735,9 @@ void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
     advect_scalar(ctx, ctx->smoke_prev, ctx->smoke, ctx->u, ctx->v);
     
     SWAP_PTR(ctx->smoke, ctx->smoke_prev);
-    
+
     s.apply_boundaries(ctx, p);
+
+    ctx->step++;
+    ctx->time += ctx->dt;
 }

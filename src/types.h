@@ -53,6 +53,8 @@ struct FluidContext {
     float* p;                       // Pressure, also the warm start of the next solve
     float* smoke;                   // Smoke
     uint8_t* solid;                 // Boundary Mask
+    size_t step;                    // Steps taken since the last reset
+    double time;                    // Simulated time since the last reset, the sum of every dt
 
     // Workspace
     float* div;                     // Divergence, the right-hand side of the pressure solve

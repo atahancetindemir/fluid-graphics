@@ -56,14 +56,15 @@ private:
     // Advances the physics by the configured number of substeps.
     void advance_simulation();
 
+    // Draws the bottom-right overlay with the read-only state of the run: grid, physics,
+    // progress, performance and the last pressure solve.
+    void draw_info_overlay();
+
     // Draws the ImGui panel and services the restart/reload it may request.
     void draw_controls();
 
     // Uploads the field the current view mode needs, then draws.
     void present();
-
-    // Refreshes the FPS readout in the window title, at most twice a second.
-    void update_title(double delta_time);
 
     // Clears the simulation and starts the scenario over. Loads the scenario
     // defaults when load_defaults is set, otherwise keeps the edited parameters.
@@ -80,9 +81,6 @@ private:
     std::vector<float> velocity_magnitudes;
     std::vector<float> u_centered;
     std::vector<float> v_centered;
-
-    double last_time = 0.0;
-    double title_timer = 0.0;
 };
 
 #endif // VIEWER_HPP

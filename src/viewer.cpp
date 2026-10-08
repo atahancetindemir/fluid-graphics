@@ -1,10 +1,8 @@
 #include "viewer.hpp"
 
-#include <GLFW/glfw3.h>
 #include <imgui.h>
 
 #include <cmath>
-#include <cstdio>
 #include <limits>
 #include <omp.h>
 
@@ -21,9 +19,10 @@ constexpr float default_viscosity = 0.001f;
 constexpr int default_poisson_iter = 100;
 constexpr float default_threshold = 1e-5f;
 
-constexpr int min_poisson_iter = 10;
-
-constexpr double title_update_interval = 0.5;
+constexpr float info_overlay_alpha = 0.75f;
+constexpr float info_overlay_margin = 10.0f;
+constexpr ImVec4 converged_color(0.45f, 0.85f, 0.45f, 1.0f);
+constexpr ImVec4 capped_color(1.0f, 0.65f, 0.25f, 1.0f);
 
 // Each menu below is driven by one table, so a label, the value it selects and the
 // properties that depend on it are declared together and cannot drift apart.
@@ -38,6 +37,8 @@ struct SolverOption {
     PressureSolver solve;
     // Omega only enters the Gauss-Seidel style sweeps; PCG never reads it.
     bool uses_omega;
+    // The preconditioner only enters PCG.
+    bool uses_preconditioner;
 };
 
 struct PrecondOption {
@@ -53,9 +54,9 @@ constexpr ScenarioOption scenario_options[] = {
 };
 
 constexpr SolverOption solver_options[] = {
-    { "PCG",  solve_pressure_pcg,  false },
-    { "RBGS", solve_pressure_rbgs, true  },
-    { "SOR",  solve_pressure_sor,  true  },
+    { "PCG",  solve_pressure_pcg,  false, true  },
+    { "RBGS", solve_pressure_rbgs, true,  false },
+    { "SOR",  solve_pressure_sor,  true,  false },
 };
 
 constexpr PrecondOption precond_options[] = {
@@ -111,7 +112,6 @@ Viewer::Viewer(Renderer& renderer) : renderer(renderer) {
     velocity_magnitudes.assign((size_t)ctx->num_cells, 0.0f);
     u_centered.assign((size_t)ctx->num_cells, 0.0f);
     v_centered.assign((size_t)ctx->num_cells, 0.0f);
-    last_time = glfwGetTime();
 }
 
 Viewer::~Viewer() {
@@ -131,14 +131,14 @@ void Viewer::restart(const bool load_defaults) {
 }
 
 void Viewer::step_frame() {
-    const double now = glfwGetTime();
-    const double delta_time = now - last_time;
-    last_time = now;
-
     advance_simulation();
+
+    renderer.begin_ui();
+    // The overlay reports the solve advance_simulation just ran, so it goes before the panel
+    // gets a chance to restart the simulation.
+    draw_info_overlay();
     draw_controls();
     present();
-    update_title(delta_time);
 }
 
 void Viewer::advance_simulation() {
@@ -149,17 +149,62 @@ void Viewer::advance_simulation() {
         fluid_step(ctx, params, scenario);
 }
 
-void Viewer::draw_controls() {
-    renderer.begin_ui();
-
-    ImGui::Begin("Controls");
-
+void Viewer::draw_info_overlay() {
     const ImGuiIO& io = ImGui::GetIO();
-    ImGui::Text("%.1f FPS  (%.2f ms/frame)", io.Framerate, 1000.0f / io.Framerate);
+    // Pinned to the bottom-right corner; the size fits the contents.
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - info_overlay_margin, io.DisplaySize.y - info_overlay_margin),
+                            ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(info_overlay_alpha);
+    ImGui::Begin("Info", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
+
+    // The default font is monospaced, so padding the labels lines the values up.
+    ImGui::Text("%-9s %d x %d", "Grid", (int)ctx->x, (int)ctx->y);
     // Viscosity and inlet velocity are live, so the reported Reynolds is computed every frame.
-    ImGui::Text("Reynolds: %.2f", fluid_reynolds(ctx, params));
-    ImGui::Text("OpenMP threads: %d", omp_get_max_threads());
+    ImGui::Text("%-9s %.2f", "Re", fluid_reynolds(ctx, params));
+    ImGui::Text("%-9s %.4f", "dt", ctx->dt);
+    ImGui::Text("%-9s %llu", "Step", (unsigned long long)ctx->step);
+    ImGui::Text("%-9s %.3f s", "Time", ctx->time);
+    ImGui::Text("%-9s %.1f (%.2f ms/frame)", "FPS", io.Framerate, 1000.0f / io.Framerate);
+    ImGui::Text("%-9s %d", "Threads", omp_get_max_threads());
     ImGui::Separator();
+
+    const SolverOption& solver = solver_options[controls.solver_index];
+    if (solver.uses_preconditioner)
+        ImGui::Text("%-9s %s (%s)", "Solver", solver.label, precond_options[controls.preconditioner_index].label);
+    else
+        ImGui::Text("%-9s %s", "Solver", solver.label);
+
+    const SolveStats& stats = ctx->stats;
+    if (stats.iterations == 0) {
+        ImGui::TextDisabled("%-9s %s", "Iter", "no solve yet");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("%-9s %3d/%d", "Iter", (int)stats.iterations, (int)ctx->poisson_iter);
+    ImGui::SameLine();
+    if (stats.converged)
+        ImGui::TextColored(converged_color, "converged");
+    else
+        ImGui::TextColored(capped_color, "capped");
+
+    ImGui::Text("%-9s %.2e", "dp", stats.delta_p);
+
+    // The absolute residual scales with dt and dx; relative to the right-hand side it does not.
+    if (stats.rhs > 0.0f)
+        ImGui::Text("%-9s %.2e (rel %.2e)", "Residual", stats.residual, stats.residual / stats.rhs);
+    else
+        ImGui::Text("%-9s %.2e (rel -)", "Residual", stats.residual);
+
+    ImGui::Text("%-9s %.2f ms", "Solve", stats.solve_ms);
+
+    ImGui::End();
+}
+
+void Viewer::draw_controls() {
+    ImGui::Begin("Controls");
 
     ImGui::Text("Visualization");
     int mode = (int)controls.mode;
@@ -207,9 +252,6 @@ void Viewer::draw_controls() {
     if (!omega_used)
         ImGui::TextDisabled("PCG does not use omega.");
 
-    int poisson_iter = (int)ctx->poisson_iter;
-    if (ImGui::SliderInt("Poisson Iter", &poisson_iter, min_poisson_iter, 2000))
-        ctx->poisson_iter = (size_t)poisson_iter;
     ImGui::SliderInt("Substeps/Frame", &controls.substeps_per_frame, 1, 50);
     ImGui::SliderInt("Arrow Stride", &controls.arrow_stride, 2, 32);
     ImGui::SliderFloat("Arrow Scale", &controls.arrow_scale, 0.001f, 0.2f, "%.4f", ImGuiSliderFlags_Logarithmic);
@@ -274,15 +316,4 @@ void Viewer::present() {
     }
 
     renderer.draw(controls.mode);
-}
-
-void Viewer::update_title(const double delta_time) {
-    title_timer += delta_time;
-    if (title_timer > title_update_interval) {
-        char title_buffer[80];
-        std::snprintf(title_buffer, sizeof(title_buffer), "%s - %.1f FPS",
-                      window_title, 1.0 / (delta_time > 0.0 ? delta_time : 1.0));
-        glfwSetWindowTitle(renderer.window(), title_buffer);
-        title_timer = 0.0;
-    }
 }
