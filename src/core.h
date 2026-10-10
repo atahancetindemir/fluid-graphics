@@ -10,6 +10,12 @@
 // Compute the maximum absolute residual across the entire grid for convergence check.
 float calculate_max_residual(const FluidContext* ctx, const float* p, const float* div);
 
+// Largest right-hand side term of the pressure Poisson equation, max |div * cp|.
+float calculate_max_rhs(const FluidContext* ctx, const float* div);
+
+// Residual level at which a pressure solve counts as converged, max(rtol * rhs, atol).
+float calculate_residual_target(const FluidContext* ctx, float rhs);
+
 // Explicit diffusion of velocity field.
 void diffuse_velocity_explicit(FluidContext* ctx, float* u_dest, float* v_dest, const float* u_src, const float* v_src, float a);
 
@@ -40,6 +46,13 @@ void compute_divergence(FluidContext* ctx, float* u, float* v);
 // Subtracts the pressure gradient from the velocity field to enforce incompressibility.
 void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p);
 
+// Measures the mass the last step left unbalanced in each fluid cell, |net face flux| / U,
+// into ctx->continuity_rms and ctx->continuity_max.
+void measure_continuity(FluidContext* ctx, ScenarioParams p);
+
+// Stores the outcome of the pressure solve that just finished in ctx->stats and prints it in debug builds.
+void record_solve_stats(FluidContext* ctx, const char* tag, SolveStats stats, double start_time);
+
 // Solves the pressure Poisson equation using Red-Black Gauss-Seidel.
 void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div);
 
@@ -57,13 +70,16 @@ void fluid_velocity_magnitude(const FluidContext* ctx, float* dest);
 void fluid_velocity_centered(const FluidContext* ctx, float* u_center, float* v_center);
 
 // Start the simulation by creating a context with given parameters.
-FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters, float threshold);
+FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, SolveTolerance tol);
 
 // Zeroes every simulation field while keeping the allocation and the physics settings intact.
 void fluid_reset_context(FluidContext* ctx);
 
 // Returns the theoretically optimal over-relaxation factor for the grid, clamped to [1.0, 1.99].
 float fluid_optimal_omega(const FluidContext* ctx);
+
+// Returns a lower-case name for a solve status, for display.
+const char* fluid_solve_status_name(SolveStatus status);
 
 // Returns the Reynolds number from the current viscosity, density and scenario parameters.
 float fluid_reynolds(const FluidContext* ctx, ScenarioParams p);

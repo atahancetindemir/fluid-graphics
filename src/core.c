@@ -11,9 +11,6 @@
 #include "utilities.h"
 #include "scenarios.h"
 
-// Gauss-Seidel sweeps for implicit diffusion.
-#define DIFFUSE_ITER 20
-
 /*
 MAC GRID (STAGGERED GRID) MEMORY & SPATIAL LAYOUT
 
@@ -357,24 +354,26 @@ void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p) {
     }
 }
 
-// Fills ctx->stats for the solve that just finished and prints it in debug builds.
-static void record_solve_stats(FluidContext* ctx, const char* tag, const float* p, const float* div,
-                               size_t iterations, int converged, float delta_p, double start_time) {
-    SolveStats* stats = &ctx->stats;
-    stats->solve_ms = (GET_TIME_SEC() - start_time) * 1000.0;
-    stats->iterations = iterations;
-    stats->converged = converged;
-    stats->delta_p = delta_p;
-    stats->residual = calculate_max_residual(ctx, p, div);
-
+float calculate_max_rhs(const FluidContext* ctx, const float* div) {
+    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
     float max_div = 0.0f;
     #pragma omp parallel for reduction(max:max_div)
     for (size_t k = 0; k < ctx->num_cells; k++)
         max_div = MAX(max_div, fabsf(div[k]));
-    stats->rhs = max_div * (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
+    return max_div * cp;
+}
+
+float calculate_residual_target(const FluidContext* ctx, float rhs) {
+    return MAX(ctx->tol.rtol * rhs, ctx->tol.atol);
+}
+
+void record_solve_stats(FluidContext* ctx, const char* tag, SolveStats stats, double start_time) {
+    stats.solve_ms = (GET_TIME_SEC() - start_time) * 1000.0;
+    ctx->stats = stats;
 
 #ifdef DEBUG
-    solver_report(tag, converged, iterations, delta_p, stats->residual, stats->solve_ms);
+    solver_report(tag, fluid_solve_status_name(stats.status), stats.iterations, stats.delta_p, stats.residual,
+                  stats.rhs > 0.0f ? stats.residual / stats.rhs : 0.0f, stats.solve_ms);
 #else
     UNUSED(tag);
 #endif // DEBUG
@@ -390,11 +389,14 @@ void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
     double start_time = GET_TIME_SEC();
+    float rhs = calculate_max_rhs(ctx, div);
+    float target = calculate_residual_target(ctx, rhs);
+    float initial_residual = calculate_max_residual(ctx, p, div);
+    float residual = initial_residual;
     size_t iterations = 0;
-    int converged = 0;
     float max_error = 0.0f;
 
-    for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
+    while (residual > target && iterations < ctx->tol.max_iter) {
         // Red pass - no error tracking needed here
         #pragma omp parallel for schedule(static)
         for (size_t i = 1; i < ctx->x - 1; i++) {
@@ -424,25 +426,33 @@ void solve_pressure_rbgs(FluidContext* ctx, float* p, const float* div) {
             }
         }
 
-        iterations = iter + 1;
-        if (max_error < ctx->threshold) {
-            converged = 1;
-            break; // Convergence check
-        }
+        iterations++;
+        if (iterations % RESIDUAL_CHECK_INTERVAL == 0 || iterations == ctx->tol.max_iter)
+            residual = calculate_max_residual(ctx, p, div);
     }
 
-    record_solve_stats(ctx, "RBGS", p, div, iterations, converged, max_error, start_time);
+    record_solve_stats(ctx, "RBGS", (SolveStats){
+        .status = residual <= target ? SOLVE_CONVERGED : SOLVE_CAPPED,
+        .iterations = iterations,
+        .delta_p = max_error,
+        .initial_residual = initial_residual,
+        .residual = residual,
+        .rhs = rhs,
+    }, start_time);
 }
 
 void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
     double start_time = GET_TIME_SEC();
+    float rhs = calculate_max_rhs(ctx, div);
+    float target = calculate_residual_target(ctx, rhs);
+    float initial_residual = calculate_max_residual(ctx, p, div);
+    float residual = initial_residual;
     size_t iterations = 0;
-    int converged = 0;
     float max_error = 0.0f;
 
-    for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
+    while (residual > target && iterations < ctx->tol.max_iter) {
         max_error = 0.0f;
 
         for (size_t i = 1; i < ctx->x - 1; i++) {
@@ -457,14 +467,19 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div) {
             }
         }
 
-        iterations = iter + 1;
-        if (max_error < ctx->threshold) {
-            converged = 1;
-            break; // Convergence check
-        }
+        iterations++;
+        if (iterations % RESIDUAL_CHECK_INTERVAL == 0 || iterations == ctx->tol.max_iter)
+            residual = calculate_max_residual(ctx, p, div);
     }
 
-    record_solve_stats(ctx, "SOR", p, div, iterations, converged, max_error, start_time);
+    record_solve_stats(ctx, "SOR", (SolveStats){
+        .status = residual <= target ? SOLVE_CONVERGED : SOLVE_CAPPED,
+        .iterations = iterations,
+        .delta_p = max_error,
+        .initial_residual = initial_residual,
+        .residual = residual,
+        .rhs = rhs,
+    }, start_time);
 }
 
 void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
@@ -477,11 +492,14 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
     float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
 
     double start_time = GET_TIME_SEC();
+    float rhs = calculate_max_rhs(ctx, div);
+    float target = calculate_residual_target(ctx, rhs);
     size_t iterations = 0;
-    int converged = 0;
     float max_change = 0.0f;
+    int broke_down = 0;
 
-    #pragma omp parallel for schedule(static)
+    float initial_residual = 0.0f;
+    #pragma omp parallel for schedule(static) reduction(max:initial_residual)
     for (size_t i = 1; i < ctx->x - 1; i++) {
         for (size_t j = 1; j < ctx->y - 1; j++) {
             size_t idx = IX(ctx, i, j);
@@ -492,15 +510,17 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
             }
             float Ap = apply_scalar_laplacian(ctx, p, i, j);
             r[idx] = div[idx] * cp - Ap;
+            initial_residual = MAX(initial_residual, fabsf(r[idx]));
         }
     }
+    float recurrence_residual = initial_residual;
 
     ctx->precondition(ctx, z, r);
     memcpy(d, z, N * sizeof(float));
 
     float delta_new = dot(r, z, N);
 
-    for (size_t iter = 0; iter < ctx->poisson_iter; iter++) {
+    while (recurrence_residual > target && iterations < ctx->tol.max_iter) {
 
         #pragma omp parallel for schedule(static)
         for (size_t i = 1; i < ctx->x - 1; i++) {
@@ -515,37 +535,57 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
         }
 
         float alpha = delta_new / dot(d, q, N);
+        if (!isfinite(alpha)) {
+            broke_down = 1;
+            break;
+        }
 
         max_change = 0.0f;
-        #pragma omp parallel for simd schedule(static) reduction(max:max_change)
+        recurrence_residual = 0.0f;
+        #pragma omp parallel for simd schedule(static) reduction(max:max_change, recurrence_residual)
         for (size_t k = 0; k < N; k++) {
             float change = alpha * d[k];
             p[k] += change;
             r[k] -= alpha * q[k];
             max_change = MAX(max_change, fabsf(change));
+            recurrence_residual = MAX(recurrence_residual, fabsf(r[k]));
         }
 
-        iterations = iter + 1;
-        if (max_change < ctx->threshold) {
-            converged = 1;
+        iterations++;
+        if (recurrence_residual <= target)
             break;
-        }
 
-        ctx->precondition(ctx, z, r);        
+        ctx->precondition(ctx, z, r);
 
         float delta_old = delta_new;
         delta_new = dot(r, z, N);
         float beta = delta_new / delta_old;
+        if (!isfinite(beta)) {
+            broke_down = 1;
+            break;
+        }
 
         #pragma omp parallel for simd schedule(static)
         for (size_t k = 0; k < N; k++)
             d[k] = z[k] + beta * d[k];
     }
 
-    record_solve_stats(ctx, "PCG", p, div, iterations, converged, max_change, start_time);
+    float residual = calculate_max_residual(ctx, p, div);
+    SolveStatus status = SOLVE_CONVERGED;
+    if (residual > target)
+        status = (broke_down || iterations < ctx->tol.max_iter) ? SOLVE_STALLED : SOLVE_CAPPED;
+
+    record_solve_stats(ctx, "PCG", (SolveStats){
+        .status = status,
+        .iterations = iterations,
+        .delta_p = max_change,
+        .initial_residual = initial_residual,
+        .residual = residual,
+        .rhs = rhs,
+    }, start_time);
 }
 
-FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, int iters, float threshold) {
+FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, SolveTolerance tol) {
     FluidContext* ctx = (FluidContext*)malloc(sizeof(FluidContext));
     
     ctx->x = res_x;
@@ -556,8 +596,7 @@ FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float d
     ctx->dx = dx;
     ctx->dens= dens;
     ctx->visc = visc;
-    ctx->poisson_iter = iters;
-    ctx->threshold = threshold;
+    ctx->tol = tol;
 
     ctx->u = (float*)malloc((res_x + 1) * res_y * sizeof(float));
     ctx->v = (float*)malloc(res_x * (res_y + 1) * sizeof(float));
@@ -607,6 +646,17 @@ void fluid_reset_context(FluidContext* ctx) {
     memset(ctx->cg.z, 0, ctx->num_cells * sizeof(float));
 
     memset(&ctx->stats, 0, sizeof(ctx->stats));
+    ctx->continuity_rms = 0.0f;
+    ctx->continuity_max = 0.0f;
+}
+
+const char* fluid_solve_status_name(SolveStatus status) {
+    switch (status) {
+        case SOLVE_CONVERGED: return "converged";
+        case SOLVE_CAPPED:    return "capped";
+        case SOLVE_STALLED:   return "stalled";
+    }
+    return "unknown";
 }
 
 float fluid_optimal_omega(const FluidContext* ctx) {
@@ -693,6 +743,31 @@ void fluid_destroy_context(FluidContext* ctx) {
     free(ctx);
 }
 
+void measure_continuity(FluidContext* ctx, ScenarioParams p) {
+    // Without a characteristic velocity the flux is reported unscaled.
+    float inv_u = p.inlet_velocity > 0.0f ? 1.0f / p.inlet_velocity : 1.0f;
+    double sum_sq = 0.0;
+    size_t fluid_cells = 0;
+    float max_err = 0.0f;
+
+    #pragma omp parallel for schedule(static) reduction(+:sum_sq, fluid_cells) reduction(max:max_err)
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        for (size_t j = 1; j < ctx->y - 1; j++) {
+            if (ctx->solid[IX(ctx, i, j)]) continue;
+
+            float flux = ctx->u[IX_U(ctx, i + 1, j)] - ctx->u[IX_U(ctx, i, j)]
+                       + ctx->v[IX_V(ctx, i, j + 1)] - ctx->v[IX_V(ctx, i, j)];
+            float err = fabsf(flux) * inv_u;
+            sum_sq += (double)err * err;
+            fluid_cells++;
+            max_err = MAX(max_err, err);
+        }
+    }
+
+    ctx->continuity_rms = fluid_cells ? (float)sqrt(sum_sq / (double)fluid_cells) : 0.0f;
+    ctx->continuity_max = max_err;
+}
+
 void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
 
     // Sources
@@ -737,6 +812,8 @@ void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
     SWAP_PTR(ctx->smoke, ctx->smoke_prev);
 
     s.apply_boundaries(ctx, p);
+
+    measure_continuity(ctx, p);
 
     ctx->step++;
     ctx->time += ctx->dt;

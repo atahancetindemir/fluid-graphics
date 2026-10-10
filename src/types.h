@@ -16,14 +16,29 @@ typedef struct {
     float* z;                       // Preconditioned residual
 } PcgWorkspace;
 
+// Stopping rule of the pressure solve: max|r| <= max(rtol * max|b|, atol), at most max_iter iterations
+typedef struct {
+    float rtol;                     // Tolerance relative to the largest right-hand side term
+    float atol;                     // Absolute floor, only reached when the right-hand side is ~0
+    size_t max_iter;                // Safety cap on iterations
+} SolveTolerance;
+
+// How the last pressure solve ended
+typedef enum {
+    SOLVE_CONVERGED,                // The true residual met the tolerance
+    SOLVE_CAPPED,                   // max_iter was reached first
+    SOLVE_STALLED                   // PCG broke down, or its recurrence residual drifted from the true one
+} SolveStatus;
+
 // Diagnostics of the last pressure solve
 typedef struct {
+    SolveStatus status;             // How the solve ended
     size_t iterations;              // Iterations the solve ran
-    int converged;                  // 1 if the threshold stopped the solve, 0 if the iteration cap did
     float delta_p;                  // Largest pressure change in the final iteration
+    float initial_residual;         // True residual of the warm start, max |Lap(p) - div * cp|
     float residual;                 // True residual of the final pressure, max |Lap(p) - div * cp|
     float rhs;                      // Largest right-hand side term, max |div * cp|
-    double solve_ms;                // Wall time of the solve, residual check excluded
+    double solve_ms;                // Wall time of the solve
 } SolveStats;
 
 // Fluid Simulation Context
@@ -42,8 +57,7 @@ struct FluidContext {
 
     // Solver Settings
     float omega;                    // Over-relaxation factor for pressure solver
-    size_t poisson_iter;            // Iteration count for Poisson solver
-    float threshold;                // Convergence threshold for iterative solvers
+    SolveTolerance tol;             // Stopping rule of the pressure solve
     PressureSolver pressure_solver; // Function pointer to the selected pressure solver
     Preconditioner precondition;    // Function pointer to the selected preconditioner
 
@@ -65,6 +79,8 @@ struct FluidContext {
 
     // Diagnostics
     SolveStats stats;               // Last pressure solve
+    float continuity_rms;           // RMS over fluid cells of |net face flux| / U after the last step
+    float continuity_max;           // Largest |net face flux| / U over fluid cells after the last step
 };
 
 // Scenario Parameters

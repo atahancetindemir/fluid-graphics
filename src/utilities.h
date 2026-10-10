@@ -34,6 +34,12 @@
 
 #define PI 3.14159265358979323846f
 
+// Gauss-Seidel sweeps for implicit diffusion.
+#define DIFFUSE_ITER 20
+
+// RBGS and SOR measure the true residual every this many iterations.
+#define RESIDUAL_CHECK_INTERVAL 10
+
 #define IX(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
 #define IX_U(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
 #define IX_V(ctx, i, j) ((size_t)(i) * ((ctx)->y + 1) + (size_t)(j))
@@ -160,9 +166,10 @@ static inline float compute_cell_residual(const FluidContext* ctx, const float* 
 }
 
 // Single diagnostics line for one pressure solve.
-static inline void solver_report(const char* tag, int converged, size_t iters, float delta, float residual, double ms) {
-    printf("[%s] %-9s after %4zu iters | Delta P: %.6e | True Res: %.6e | Time: %8.2f ms | %6.4f ms/iter\n",
-           tag, converged ? "Converged" : "Stopped", iters, delta, residual, ms, iters ? ms / (double)iters : 0.0);
+static inline void solver_report(const char* tag, const char* status, size_t iters, float delta, float residual,
+                                 float rel_residual, double ms) {
+    printf("[%s] %-9s after %4zu iters | Delta P: %.6e | True Res: %.6e (rel %.3e) | Time: %8.2f ms | %6.4f ms/iter\n",
+           tag, status, iters, delta, residual, rel_residual, ms, iters ? ms / (double)iters : 0.0);
 }
 
 // Bilinear interpolation for advecting values at non-grid positions.

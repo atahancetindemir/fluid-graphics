@@ -11,18 +11,18 @@ extern "C" {
     #include "preconditioners.h"
 }
 
-constexpr size_t default_grid_size = 256;
+constexpr size_t default_grid_size = 128;
 constexpr float default_dt = 0.016f;
 constexpr float default_dx = 0.1f;
 constexpr float default_density = 1.0f;
 constexpr float default_viscosity = 0.001f;
-constexpr int default_poisson_iter = 100;
-constexpr float default_threshold = 1e-5f;
+constexpr SolveTolerance default_tolerance = { 1e-4f, 1e-9f, 1000 };
 
 constexpr float info_overlay_alpha = 0.75f;
 constexpr float info_overlay_margin = 10.0f;
 constexpr ImVec4 converged_color(0.45f, 0.85f, 0.45f, 1.0f);
 constexpr ImVec4 capped_color(1.0f, 0.65f, 0.25f, 1.0f);
+constexpr ImVec4 stalled_color(1.0f, 0.35f, 0.35f, 1.0f);
 
 // Each menu below is driven by one table, so a label, the value it selects and the
 // properties that depend on it are declared together and cannot drift apart.
@@ -105,7 +105,7 @@ Viewer::Viewer(Renderer& renderer) : renderer(renderer) {
         default_grid_size, default_grid_size,
         default_dt, default_dx,
         default_density, default_viscosity,
-        default_poisson_iter, default_threshold);
+        default_tolerance);
 
     restart(true);
 
@@ -160,45 +160,49 @@ void Viewer::draw_info_overlay() {
                  ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
 
     // The default font is monospaced, so padding the labels lines the values up.
-    ImGui::Text("%-9s %d x %d", "Grid", (int)ctx->x, (int)ctx->y);
+    ImGui::Text("%-10s %d x %d", "Grid", (int)ctx->x, (int)ctx->y);
     // Viscosity and inlet velocity are live, so the reported Reynolds is computed every frame.
-    ImGui::Text("%-9s %.2f", "Re", fluid_reynolds(ctx, params));
-    ImGui::Text("%-9s %.4f", "dt", ctx->dt);
-    ImGui::Text("%-9s %llu", "Step", (unsigned long long)ctx->step);
-    ImGui::Text("%-9s %.3f s", "Time", ctx->time);
-    ImGui::Text("%-9s %.1f (%.2f ms/frame)", "FPS", io.Framerate, 1000.0f / io.Framerate);
-    ImGui::Text("%-9s %d", "Threads", omp_get_max_threads());
+    ImGui::Text("%-10s %.2f", "Re", fluid_reynolds(ctx, params));
+    ImGui::Text("%-10s %.4f", "dt", ctx->dt);
+    ImGui::Text("%-10s %llu", "Step", (unsigned long long)ctx->step);
+    ImGui::Text("%-10s %.3f s", "Time", ctx->time);
+    ImGui::Text("%-10s %.1f (%.2f ms/frame)", "FPS", io.Framerate, 1000.0f / io.Framerate);
+    ImGui::Text("%-10s %d", "Threads", omp_get_max_threads());
     ImGui::Separator();
 
     const SolverOption& solver = solver_options[controls.solver_index];
     if (solver.uses_preconditioner)
-        ImGui::Text("%-9s %s (%s)", "Solver", solver.label, precond_options[controls.preconditioner_index].label);
+        ImGui::Text("%-10s %s (%s)", "p solve", solver.label, precond_options[controls.preconditioner_index].label);
     else
-        ImGui::Text("%-9s %s", "Solver", solver.label);
+        ImGui::Text("%-10s %s", "p solve", solver.label);
 
-    const SolveStats& stats = ctx->stats;
-    if (stats.iterations == 0) {
-        ImGui::TextDisabled("%-9s %s", "Iter", "no solve yet");
+    if (ctx->step == 0) {
+        ImGui::TextDisabled("%-10s %s", "Iter", "no solve yet");
         ImGui::End();
         return;
     }
 
-    ImGui::Text("%-9s %3d/%d", "Iter", (int)stats.iterations, (int)ctx->poisson_iter);
+    const SolveStats& stats = ctx->stats;
+    ImGui::Text("%-10s %4d/%d", "Iter", (int)stats.iterations, (int)ctx->tol.max_iter);
     ImGui::SameLine();
-    if (stats.converged)
-        ImGui::TextColored(converged_color, "converged");
-    else
-        ImGui::TextColored(capped_color, "capped");
+    const ImVec4 status_color = stats.status == SOLVE_CONVERGED ? converged_color
+                              : stats.status == SOLVE_CAPPED    ? capped_color
+                                                                : stalled_color;
+    ImGui::TextColored(status_color, "%s", fluid_solve_status_name(stats.status));
 
-    ImGui::Text("%-9s %.2e", "dp", stats.delta_p);
+    ImGui::Text("%-10s %.2e", "dp", stats.delta_p);
 
-    // The absolute residual scales with dt and dx; relative to the right-hand side it does not.
-    if (stats.rhs > 0.0f)
-        ImGui::Text("%-9s %.2e (rel %.2e)", "Residual", stats.residual, stats.residual / stats.rhs);
-    else
-        ImGui::Text("%-9s %.2e (rel -)", "Residual", stats.residual);
+    // Relative to the largest right-hand side term, the residual does not depend on dt or dx.
+    if (stats.rhs > 0.0f) {
+        ImGui::Text("%-10s rel %.2e / %.2e", "Residual", stats.residual / stats.rhs, ctx->tol.rtol);
+        ImGui::Text("%-10s rel %.2e", "Initial", stats.initial_residual / stats.rhs);
+    } else {
+        ImGui::Text("%-10s abs %.2e", "Residual", stats.residual);
+        ImGui::Text("%-10s abs %.2e", "Initial", stats.initial_residual);
+    }
 
-    ImGui::Text("%-9s %.2f ms", "Solve", stats.solve_ms);
+    ImGui::Text("%-10s %.2f ms", "Solve", stats.solve_ms);
+    ImGui::Text("%-10s rms %.2e max %.2e", "Continuity", ctx->continuity_rms, ctx->continuity_max);
 
     ImGui::End();
 }
