@@ -125,8 +125,8 @@ void apply_boundaries_lid_driven(FluidContext* ctx, ScenarioParams p) {
 // Von Karman-Vortex Street
 
 void init_karman_vortex(FluidContext* ctx, ScenarioParams p) {
-    // Top and bottom walls only
-    bound_build_outer_walls(ctx, 1, 1, 0, 0);
+    // Top and bottom walls, and the inlet column
+    bound_build_outer_walls(ctx, 1, 1, 1, 0);
 
     // Build the cylinder obstacle
     for (size_t i = 0; i < ctx->x; i++) {
@@ -172,6 +172,9 @@ void init_airfoil(FluidContext* ctx, ScenarioParams p) {
         ctx->solid[i] = 0;
         ctx->smoke[i] = 0.0f; 
     }
+
+    // Inlet column; the top and bottom stay open
+    bound_build_outer_walls(ctx, 0, 0, 1, 0);
 
     // Airfoil dimensions and position
     float chord = p.chord_length;
@@ -232,10 +235,10 @@ void apply_boundaries_airfoil(FluidContext* ctx, ScenarioParams p) {
     size_t center_j = ctx->y / 2;
     size_t smoke_band_radius = ctx->y / 64;
 
+    bound_apply_no_slip(ctx);
     bound_apply_inlet_left(ctx, p.inlet_velocity, 1.0f, center_j - smoke_band_radius, center_j + smoke_band_radius);
     bound_apply_outlet_right(ctx);
-    bound_apply_slip_horizontal(ctx);
-    bound_apply_no_slip(ctx);
+    bound_apply_opening_horizontal(ctx);
 }
 
 // Urban City
@@ -248,6 +251,9 @@ void init_urban_city(FluidContext* ctx, ScenarioParams p) {
         ctx->solid[i] = 0;
         ctx->smoke[i] = 0.1f;
     }
+
+    // Inlet column; the top and bottom stay open
+    bound_build_outer_walls(ctx, 0, 0, 1, 0);
 
     // Zone 1: Frontal low-rise buildings
     BUILD_BLOCK(0.10f, 0.15f, 0.05f, 0.10f);
@@ -289,9 +295,9 @@ void apply_sources_urban_city(FluidContext* ctx, ScenarioParams p) {
 }
 
 void apply_boundaries_urban_city(FluidContext* ctx, ScenarioParams p) {
-    // Full wall inlet with continuous smoke injection
-    bound_apply_inlet_left(ctx, p.inlet_velocity, 1.0f, 1, ctx->y - 1);
-    bound_apply_outlet_right(ctx);
-    bound_apply_slip_horizontal(ctx);
     bound_apply_no_slip(ctx);
+    // Full wall inlet with continuous smoke injection
+    bound_apply_inlet_left(ctx, p.inlet_velocity, 1.0f, 1, ctx->y - 2);
+    bound_apply_outlet_right(ctx);
+    bound_apply_opening_horizontal(ctx);
 }

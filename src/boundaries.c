@@ -19,11 +19,25 @@ void bound_apply_no_slip(FluidContext* ctx) {
     }
 }
 
-void bound_apply_slip_horizontal(FluidContext* ctx) {
-    // Slip condition for wind tunnel walls (Top and Bottom)
-    for (size_t i = 1; i < ctx->x - 1; i++) {
-        ctx->v[IX_V(ctx, i, 1)] = 0.0f;
-        ctx->v[IX_V(ctx, i, ctx->y - 1)] = 0.0f;
+void bound_apply_free_slip_horizontal(FluidContext* ctx) {
+    // The wall-normal faces are already zero from the solid rows; mirror the tangential velocity.
+    for (size_t i = 0; i <= ctx->x; i++) {
+        ctx->u[IX_U(ctx, i, 0)] = ctx->u[IX_U(ctx, i, 1)];
+        ctx->u[IX_U(ctx, i, ctx->y - 1)] = ctx->u[IX_U(ctx, i, ctx->y - 2)];
+    }
+}
+
+void bound_apply_opening_horizontal(FluidContext* ctx) {
+    // Tangential velocity in the boundary rows
+    for (size_t i = 0; i <= ctx->x; i++) {
+        ctx->u[IX_U(ctx, i, 0)] = ctx->u[IX_U(ctx, i, 1)];
+        ctx->u[IX_U(ctx, i, ctx->y - 1)] = ctx->u[IX_U(ctx, i, ctx->y - 2)];
+    }
+
+    // Outer faces of the boundary rows; the faces at j = 1 and j = y - 1 belong to the projection
+    for (size_t i = 0; i < ctx->x; i++) {
+        ctx->v[IX_V(ctx, i, 0)] = ctx->v[IX_V(ctx, i, 1)];
+        ctx->v[IX_V(ctx, i, ctx->y)] = ctx->v[IX_V(ctx, i, ctx->y - 1)];
     }
 }
 
@@ -43,9 +57,10 @@ void bound_apply_inlet_left(FluidContext* ctx, float velocity, float smoke_densi
 }
 
 void bound_apply_outlet_right(FluidContext* ctx) {
-    // Zero-gradient for seamless outflow
+    // Zero-gradient for seamless outflow; the face at i = x - 1 belongs to the projection
     for (size_t j = 1; j < ctx->y - 1; j++) {
-        ctx->u[IX_U(ctx, ctx->x - 1, j)] = ctx->u[IX_U(ctx, ctx->x - 2, j)];
+        ctx->u[IX_U(ctx, ctx->x, j)] = ctx->u[IX_U(ctx, ctx->x - 1, j)];
+        ctx->v[IX_V(ctx, ctx->x - 1, j)] = ctx->v[IX_V(ctx, ctx->x - 2, j)];
         ctx->smoke[IX(ctx, ctx->x - 1, j)] = ctx->smoke[IX(ctx, ctx->x - 2, j)];
     }
 }
