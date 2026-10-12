@@ -6,6 +6,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -36,13 +37,39 @@ static void check_shader(unsigned int shader, const char* path) {
     }
 }
 
-Renderer::Renderer(const int width, const int height, const char* title) {
+// Centers the grid in the framebuffer at the largest whole number of pixels per cell, at least one
+static void fit_viewport(GLFWwindow* window, const int width, const int height) {
+    int framebuffer_width = 0;
+    int framebuffer_height = 0;
+    glfwGetFramebufferSize(window, &framebuffer_width, &framebuffer_height);
+
+    const int scale = std::max(1, std::min(framebuffer_width / width, framebuffer_height / height));
+    const int viewport_width = scale * width;
+    const int viewport_height = scale * height;
+    glViewport((framebuffer_width - viewport_width) / 2, (framebuffer_height - viewport_height) / 2,
+               viewport_width, viewport_height);
+}
+
+Renderer::Renderer(const char* title) {
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    glfw_window = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    // Fullscreen at the monitor's current mode, so the display resolution does not change
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+    if (mode == nullptr) {
+        fprintf(stderr, "GLFW found no monitor\n");
+        glfwTerminate();
+        exit(1);
+    }
+    glfwWindowHint(GLFW_RED_BITS, mode->redBits);
+    glfwWindowHint(GLFW_GREEN_BITS, mode->greenBits);
+    glfwWindowHint(GLFW_BLUE_BITS, mode->blueBits);
+    glfwWindowHint(GLFW_REFRESH_RATE, mode->refreshRate);
+
+    glfw_window = glfwCreateWindow(mode->width, mode->height, title, monitor, nullptr);
     if (glfw_window == nullptr) {
         const char* desc = nullptr;
         glfwGetError(&desc);
@@ -178,6 +205,10 @@ bool Renderer::should_close() const {
     return glfwWindowShouldClose(glfw_window);
 }
 
+void Renderer::close() const {
+    glfwSetWindowShouldClose(glfw_window, GLFW_TRUE);
+}
+
 void Renderer::update_field(const float* data, const int width, const int height, const float range_min, const float range_max) {
     if (field_texture == 0 || width != field_width || height != field_height)
         create_field_texture(width, height);
@@ -187,7 +218,7 @@ void Renderer::update_field(const float* data, const int width, const int height
 
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glBindTexture(GL_TEXTURE_2D, field_texture);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RED, GL_FLOAT, data);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, height, width, GL_RED, GL_FLOAT, data);
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -207,7 +238,8 @@ void Renderer::create_field_texture(const int width, const int height) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, width, height, 0, GL_RED, GL_FLOAT, nullptr);
+    // i-major data: one texture row per i, so the texture is height x width
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, height, width, 0, GL_RED, GL_FLOAT, nullptr);
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -217,25 +249,30 @@ void Renderer::update_arrows(const float* u_centered, const float* v_centered, c
     std::vector<float> vertices;
     vertices.reserve(((size_t)(width / stride) * (height / stride)) * 12);
 
+    // Arrows are built in cell units and mapped to NDC per axis
+    const float cell_scale = 0.5f * scale * (float)std::max(width, height);
+    const auto push_vertex = [&](const float x, const float y) {
+        vertices.push_back(2.0f * x / (float)width - 1.0f);
+        vertices.push_back(2.0f * y / (float)height - 1.0f);
+    };
+
     for (int i = stride / 2; i < width; i += stride) {
         for (int j = stride / 2; j < height; j += stride) {
             const float u_center = u_centered[(size_t)i * (size_t)height + j];
             const float v_center = v_centered[(size_t)i * (size_t)height + j];
 
             // After the UV swap in field.frag, screen-X = sim-i and screen-Y = sim-j.
-            const float base_x = 2.0f * ((float)i + 0.5f) / (float)width - 1.0f;
-            const float base_y = 2.0f * ((float)j + 0.5f) / (float)height - 1.0f;
+            const float base_x = (float)i + 0.5f;
+            const float base_y = (float)j + 0.5f;
 
-            const float delta_x = u_center * scale;
-            const float delta_y = v_center * scale;
+            const float delta_x = u_center * cell_scale;
+            const float delta_y = v_center * cell_scale;
             const float tip_x = base_x + delta_x;
             const float tip_y = base_y + delta_y;
 
             // Shaft
-            vertices.push_back(base_x);
-            vertices.push_back(base_y);
-            vertices.push_back(tip_x);
-            vertices.push_back(tip_y);
+            push_vertex(base_x, base_y);
+            push_vertex(tip_x, tip_y);
 
             // Arrowhead — two wing line segments
             const float len = std::sqrt(delta_x * delta_x + delta_y * delta_y);
@@ -257,19 +294,13 @@ void Renderer::update_arrows(const float* u_centered, const float* v_centered, c
                 const float wing_b_x = arrowhead_base_x - wing_offset_x;
                 const float wing_b_y = arrowhead_base_y - wing_offset_y;
 
-                vertices.push_back(tip_x);
-                vertices.push_back(tip_y);
-                vertices.push_back(wing_a_x);
-                vertices.push_back(wing_a_y);
-                vertices.push_back(tip_x);
-                vertices.push_back(tip_y);
-                vertices.push_back(wing_b_x);
-                vertices.push_back(wing_b_y);
+                push_vertex(tip_x, tip_y);
+                push_vertex(wing_a_x, wing_a_y);
+                push_vertex(tip_x, tip_y);
+                push_vertex(wing_b_x, wing_b_y);
             } else {
-                for (int k = 0; k < 4; ++k) {
-                    vertices.push_back(tip_x);
-                    vertices.push_back(tip_y);
-                }
+                for (int k = 0; k < 4; ++k)
+                    push_vertex(tip_x, tip_y);
             }
         }
     }
@@ -295,9 +326,10 @@ void Renderer::begin_ui() const {
     ImGui::NewFrame();
 }
 
-void Renderer::draw(const ViewMode mode) const {
+void Renderer::draw(const ViewMode mode, const int width, const int height) const {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
+    fit_viewport(glfw_window, width, height);
 
     const bool draw_field = (mode == ViewMode::SMOKE ||
                              mode == ViewMode::PRESSURE ||

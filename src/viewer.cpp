@@ -135,6 +135,10 @@ void Viewer::step_frame() {
     advance_simulation();
 
     renderer.begin_ui();
+    // Esc quits unless a widget is using the keyboard
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantCaptureKeyboard)
+        renderer.close();
+
     // The overlay reports the solve advance_simulation just ran, so it goes before the panel
     // gets a chance to restart the simulation.
     draw_info_overlay();
@@ -347,5 +351,5 @@ void Viewer::present() {
                                controls.arrow_stride, controls.arrow_scale);
     }
 
-    renderer.draw(controls.mode);
+    renderer.draw(controls.mode, width, height);
 }

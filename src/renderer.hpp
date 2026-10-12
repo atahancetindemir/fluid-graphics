@@ -13,20 +13,23 @@ enum class ViewMode {
 
 class Renderer {
 public:
-    Renderer(int width, int height, const char* title);
+    // Opens a fullscreen window on the primary monitor at its current resolution.
+    explicit Renderer(const char* title);
     ~Renderer();
 
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
     [[nodiscard]] bool should_close() const;
+    void close() const;
     [[nodiscard]] GLFWwindow* window() const { return glfw_window; }
 
     void update_field(const float* data, int width, int height, float range_min, float range_max);
     // Takes cell-centered velocity (num_cells floats each), not the staggered field.
     void update_arrows(const float* u_centered, const float* v_centered, int width, int height, int stride, float scale);
     void begin_ui() const;
-    void draw(ViewMode mode) const;
+    // Draws the width x height grid centered, at the largest whole number of pixels per cell that fits.
+    void draw(ViewMode mode, int width, int height) const;
 
 private:
     [[nodiscard]] static unsigned int compile_shader(const char* vert_path, const char* frag_path);

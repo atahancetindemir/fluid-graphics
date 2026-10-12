@@ -11,8 +11,6 @@ extern "C" {
 }
 
 // Window configuration for the viewer's renderer.
-constexpr int window_width = 800;
-constexpr int window_height = 800;
 constexpr const char* window_title = "Fluid Simulation";
 
 // Everything the control panel edits: what to draw, which scenario and solver to
