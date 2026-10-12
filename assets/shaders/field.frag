@@ -8,6 +8,7 @@ uniform float u_range_min;
 uniform float u_range_max;
 
 // Turbo colormap polynomial approximation (Google, 2019).
+// turbo_color() in src/viewer.cpp draws the colour bar with a copy of this polynomial.
 vec3 turbo(float value)
 {
     value = clamp(value, 0.0, 1.0);

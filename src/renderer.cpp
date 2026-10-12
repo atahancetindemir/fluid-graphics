@@ -37,19 +37,6 @@ static void check_shader(unsigned int shader, const char* path) {
     }
 }
 
-// Centers the grid in the framebuffer at the largest whole number of pixels per cell, at least one
-static void fit_viewport(GLFWwindow* window, const int width, const int height) {
-    int framebuffer_width = 0;
-    int framebuffer_height = 0;
-    glfwGetFramebufferSize(window, &framebuffer_width, &framebuffer_height);
-
-    const int scale = std::max(1, std::min(framebuffer_width / width, framebuffer_height / height));
-    const int viewport_width = scale * width;
-    const int viewport_height = scale * height;
-    glViewport((framebuffer_width - viewport_width) / 2, (framebuffer_height - viewport_height) / 2,
-               viewport_width, viewport_height);
-}
-
 Renderer::Renderer(const char* title) {
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -190,6 +177,8 @@ void Renderer::create_arrow_buffer() {
 void Renderer::init_imgui() const {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    // Window positions come from the viewer's layout, not from imgui.ini
+    ImGui::GetIO().IniFilename = nullptr;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(glfw_window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
@@ -326,10 +315,14 @@ void Renderer::begin_ui() const {
     ImGui::NewFrame();
 }
 
-void Renderer::draw(const ViewMode mode, const int width, const int height) const {
+void Renderer::draw(const ViewMode mode, const FieldRect& field) const {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    fit_viewport(glfw_window, width, height);
+
+    // The field rectangle is measured from the top, OpenGL counts y from the bottom
+    int framebuffer_height = 0;
+    glfwGetFramebufferSize(glfw_window, nullptr, &framebuffer_height);
+    glViewport(field.x, framebuffer_height - field.y - field.height, field.width, field.height);
 
     const bool draw_field = (mode == ViewMode::SMOKE ||
                              mode == ViewMode::PRESSURE ||

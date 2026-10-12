@@ -3,6 +3,14 @@
 
 struct GLFWwindow;
 
+// Screen rectangle in pixels, measured from the top-left corner.
+struct FieldRect {
+    int x;
+    int y;
+    int width;
+    int height;
+};
+
 enum class ViewMode {
     SMOKE,
     PRESSURE,
@@ -28,8 +36,8 @@ public:
     // Takes cell-centered velocity (num_cells floats each), not the staggered field.
     void update_arrows(const float* u_centered, const float* v_centered, int width, int height, int stride, float scale);
     void begin_ui() const;
-    // Draws the width x height grid centered, at the largest whole number of pixels per cell that fits.
-    void draw(ViewMode mode, int width, int height) const;
+    // Draws the field and arrows into the field rectangle, then the UI.
+    void draw(ViewMode mode, const FieldRect& field) const;
 
 private:
     [[nodiscard]] static unsigned int compile_shader(const char* vert_path, const char* frag_path);
