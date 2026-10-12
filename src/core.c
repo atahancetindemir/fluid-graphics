@@ -489,17 +489,104 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
     float* q = ctx->cg.q;
     float* z = ctx->cg.z;
 
-    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
-
     double start_time = GET_TIME_SEC();
     float rhs = calculate_max_rhs(ctx, div);
     float target = calculate_residual_target(ctx, rhs);
     size_t iterations = 0;
+    size_t replacements = 0;
     float max_change = 0.0f;
     int broke_down = 0;
 
-    float initial_residual = 0.0f;
-    #pragma omp parallel for schedule(static) reduction(max:initial_residual)
+    float delta_new = 0.0f;
+    float initial_residual = pcg_reset(ctx, p, div, &delta_new);
+    float recurrence_residual = initial_residual;
+    float residual = initial_residual;
+
+    for (;;) {
+        while (recurrence_residual > target && iterations < ctx->tol.max_iter) {
+
+            #pragma omp parallel for schedule(static)
+            for (size_t i = 1; i < ctx->x - 1; i++) {
+                for (size_t j = 1; j < ctx->y - 1; j++) {
+                    size_t idx = IX(ctx, i, j);
+                    if (ctx->solid[idx]) {
+                        q[idx] = 0.0f;
+                        continue;
+                    }
+                    q[idx] = apply_scalar_laplacian(ctx, d, i, j);
+                }
+            }
+
+            float alpha = delta_new / dot(d, q, N);
+            if (!isfinite(alpha)) {
+                broke_down = 1;
+                break;
+            }
+
+            max_change = 0.0f;
+            recurrence_residual = 0.0f;
+            #pragma omp parallel for simd schedule(static) reduction(max:max_change, recurrence_residual)
+            for (size_t k = 0; k < N; k++) {
+                float change = alpha * d[k];
+                p[k] += change;
+                r[k] -= alpha * q[k];
+                max_change = MAX(max_change, fabsf(change));
+                recurrence_residual = MAX(recurrence_residual, fabsf(r[k]));
+            }
+
+            iterations++;
+            if (recurrence_residual <= target)
+                break;
+
+            ctx->precondition(ctx, z, r);
+
+            float delta_old = delta_new;
+            delta_new = dot(r, z, N);
+            float beta = delta_new / delta_old;
+            if (!isfinite(beta)) {
+                broke_down = 1;
+                break;
+            }
+
+            #pragma omp parallel for simd schedule(static)
+            for (size_t k = 0; k < N; k++)
+                d[k] = z[k] + beta * d[k];
+        }
+
+        residual = calculate_max_residual(ctx, p, div);
+        if (residual <= target || broke_down || iterations >= ctx->tol.max_iter ||
+            replacements == PCG_MAX_REPLACEMENTS)
+            break;
+
+        // True residual missed the target, restart from it
+        recurrence_residual = pcg_reset(ctx, p, div, &delta_new);
+        replacements++;
+    }
+
+    SolveStatus status = SOLVE_CONVERGED;
+    if (residual > target)
+        status = (broke_down || iterations < ctx->tol.max_iter) ? SOLVE_STALLED : SOLVE_CAPPED;
+
+    record_solve_stats(ctx, "PCG", (SolveStats){
+        .status = status,
+        .iterations = iterations,
+        .replacements = replacements,
+        .delta_p = max_change,
+        .initial_residual = initial_residual,
+        .residual = residual,
+        .rhs = rhs,
+    }, start_time);
+}
+
+float pcg_reset(FluidContext* ctx, const float* p, const float* div, float* delta) {
+    size_t N = ctx->num_cells;
+    float* r = ctx->cg.r;
+    float* d = ctx->cg.d;
+    float* z = ctx->cg.z;
+    float cp = (ctx->dens * ctx->dx * ctx->dx) / ctx->dt;
+
+    float max_r = 0.0f;
+    #pragma omp parallel for schedule(static) reduction(max:max_r)
     for (size_t i = 1; i < ctx->x - 1; i++) {
         for (size_t j = 1; j < ctx->y - 1; j++) {
             size_t idx = IX(ctx, i, j);
@@ -510,79 +597,15 @@ void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div) {
             }
             float Ap = apply_scalar_laplacian(ctx, p, i, j);
             r[idx] = div[idx] * cp - Ap;
-            initial_residual = MAX(initial_residual, fabsf(r[idx]));
+            max_r = MAX(max_r, fabsf(r[idx]));
         }
     }
-    float recurrence_residual = initial_residual;
 
     ctx->precondition(ctx, z, r);
     memcpy(d, z, N * sizeof(float));
 
-    float delta_new = dot(r, z, N);
-
-    while (recurrence_residual > target && iterations < ctx->tol.max_iter) {
-
-        #pragma omp parallel for schedule(static)
-        for (size_t i = 1; i < ctx->x - 1; i++) {
-            for (size_t j = 1; j < ctx->y - 1; j++) {
-                size_t idx = IX(ctx, i, j);
-                if (ctx->solid[idx]) {
-                    q[idx] = 0.0f;
-                    continue;
-                }
-                q[idx] = apply_scalar_laplacian(ctx, d, i, j);
-            }
-        }
-
-        float alpha = delta_new / dot(d, q, N);
-        if (!isfinite(alpha)) {
-            broke_down = 1;
-            break;
-        }
-
-        max_change = 0.0f;
-        recurrence_residual = 0.0f;
-        #pragma omp parallel for simd schedule(static) reduction(max:max_change, recurrence_residual)
-        for (size_t k = 0; k < N; k++) {
-            float change = alpha * d[k];
-            p[k] += change;
-            r[k] -= alpha * q[k];
-            max_change = MAX(max_change, fabsf(change));
-            recurrence_residual = MAX(recurrence_residual, fabsf(r[k]));
-        }
-
-        iterations++;
-        if (recurrence_residual <= target)
-            break;
-
-        ctx->precondition(ctx, z, r);
-
-        float delta_old = delta_new;
-        delta_new = dot(r, z, N);
-        float beta = delta_new / delta_old;
-        if (!isfinite(beta)) {
-            broke_down = 1;
-            break;
-        }
-
-        #pragma omp parallel for simd schedule(static)
-        for (size_t k = 0; k < N; k++)
-            d[k] = z[k] + beta * d[k];
-    }
-
-    float residual = calculate_max_residual(ctx, p, div);
-    SolveStatus status = SOLVE_CONVERGED;
-    if (residual > target)
-        status = (broke_down || iterations < ctx->tol.max_iter) ? SOLVE_STALLED : SOLVE_CAPPED;
-
-    record_solve_stats(ctx, "PCG", (SolveStats){
-        .status = status,
-        .iterations = iterations,
-        .delta_p = max_change,
-        .initial_residual = initial_residual,
-        .residual = residual,
-        .rhs = rhs,
-    }, start_time);
+    *delta = dot(r, z, N);
+    return max_r;
 }
 
 FluidContext* fluid_create_context(size_t res_x, size_t res_y, float dt, float dx, float dens, float visc, SolveTolerance tol) {
@@ -648,6 +671,7 @@ void fluid_reset_context(FluidContext* ctx) {
     memset(&ctx->stats, 0, sizeof(ctx->stats));
     ctx->continuity_rms = 0.0f;
     ctx->continuity_max = 0.0f;
+    memset(&ctx->mass, 0, sizeof(ctx->mass));
 }
 
 const char* fluid_solve_status_name(SolveStatus status) {
@@ -768,6 +792,39 @@ void measure_continuity(FluidContext* ctx, ScenarioParams p) {
     ctx->continuity_max = max_err;
 }
 
+void measure_mass_balance(FluidContext* ctx) {
+    double inflow = 0.0, outflow = 0.0;
+    double left = 0.0, right = 0.0, bottom = 0.0, top = 0.0;
+
+    // Positive u/v enters on the left/bottom and leaves on the right/top
+    for (size_t j = 1; j < ctx->y - 1; j++) {
+        double in_left = ctx->u[IX_U(ctx, 1, j)];
+        double out_right = ctx->u[IX_U(ctx, ctx->x - 1, j)];
+        left -= in_left;
+        right += out_right;
+        inflow += MAX(in_left, 0.0) + MAX(-out_right, 0.0);
+        outflow += MAX(-in_left, 0.0) + MAX(out_right, 0.0);
+    }
+    for (size_t i = 1; i < ctx->x - 1; i++) {
+        double in_bottom = ctx->v[IX_V(ctx, i, 1)];
+        double out_top = ctx->v[IX_V(ctx, i, ctx->y - 1)];
+        bottom -= in_bottom;
+        top += out_top;
+        inflow += MAX(in_bottom, 0.0) + MAX(-out_top, 0.0);
+        outflow += MAX(-in_bottom, 0.0) + MAX(out_top, 0.0);
+    }
+
+    double dx = ctx->dx;
+    ctx->mass = (MassBalance){
+        .inflow = (float)(inflow * dx),
+        .outflow = (float)(outflow * dx),
+        .left = (float)(left * dx),
+        .right = (float)(right * dx),
+        .bottom = (float)(bottom * dx),
+        .top = (float)(top * dx),
+    };
+}
+
 void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
 
     // Sources
@@ -814,6 +871,7 @@ void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
     s.apply_boundaries(ctx, p);
 
     measure_continuity(ctx, p);
+    measure_mass_balance(ctx);
 
     ctx->step++;
     ctx->time += ctx->dt;

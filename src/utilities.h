@@ -40,6 +40,9 @@
 // RBGS and SOR measure the true residual every this many iterations.
 #define RESIDUAL_CHECK_INTERVAL 10
 
+// Max PCG restarts per solve
+#define PCG_MAX_REPLACEMENTS 3
+
 #define IX(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
 #define IX_U(ctx, i, j) ((size_t)(i) * (ctx)->y + (size_t)(j))
 #define IX_V(ctx, i, j) ((size_t)(i) * ((ctx)->y + 1) + (size_t)(j))

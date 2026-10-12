@@ -50,6 +50,9 @@ void subtract_gradient(FluidContext* ctx, float* u, float* v, float* p);
 // into ctx->continuity_rms and ctx->continuity_max.
 void measure_continuity(FluidContext* ctx, ScenarioParams p);
 
+// Measures the inflow, outflow and net outflow per side of the domain into ctx->mass.
+void measure_mass_balance(FluidContext* ctx);
+
 // Stores the outcome of the pressure solve that just finished in ctx->stats and prints it in debug builds.
 void record_solve_stats(FluidContext* ctx, const char* tag, SolveStats stats, double start_time);
 
@@ -61,6 +64,9 @@ void solve_pressure_sor(FluidContext* ctx, float* p, const float* div);
 
 // Solves the pressure Poisson equation using Preconditioned Conjugate Gradient method.
 void solve_pressure_pcg(FluidContext* ctx, float* p, const float* div);
+
+// Restarts PCG from the true residual of p and returns max |r|.
+float pcg_reset(FluidContext* ctx, const float* p, const float* div, float* delta);
 
 // Computes the cell-centered velocity magnitude for every cell into dest (num_cells floats).
 void fluid_velocity_magnitude(const FluidContext* ctx, float* dest);

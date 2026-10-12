@@ -3,6 +3,7 @@
 #include <imgui.h>
 
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <omp.h>
 
@@ -159,7 +160,7 @@ void Viewer::draw_info_overlay() {
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                  ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
 
-    // The default font is monospaced, so padding the labels lines the values up.
+    // Monospaced font: padded labels line up the values
     ImGui::Text("%-10s %d x %d", "Grid", (int)ctx->x, (int)ctx->y);
     // Viscosity and inlet velocity are live, so the reported Reynolds is computed every frame.
     ImGui::Text("%-10s %.2f", "Re", fluid_reynolds(ctx, params));
@@ -183,12 +184,19 @@ void Viewer::draw_info_overlay() {
     }
 
     const SolveStats& stats = ctx->stats;
-    ImGui::Text("%-10s %4d/%d", "Iter", (int)stats.iterations, (int)ctx->tol.max_iter);
+    // Fixed width keeps the status in place
+    char iter_text[32];
+    snprintf(iter_text, sizeof(iter_text), "%d/%d", (int)stats.iterations, (int)ctx->tol.max_iter);
+    ImGui::Text("%-10s %-9s", "Iter", iter_text);
     ImGui::SameLine();
     const ImVec4 status_color = stats.status == SOLVE_CONVERGED ? converged_color
                               : stats.status == SOLVE_CAPPED    ? capped_color
                                                                 : stalled_color;
-    ImGui::TextColored(status_color, "%s", fluid_solve_status_name(stats.status));
+    ImGui::TextColored(status_color, "%-9s", fluid_solve_status_name(stats.status));
+    if (solver.uses_preconditioner) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("restarts %d", (int)stats.replacements);
+    }
 
     ImGui::Text("%-10s %.2e", "dp", stats.delta_p);
 
@@ -203,6 +211,17 @@ void Viewer::draw_info_overlay() {
 
     ImGui::Text("%-10s %.2f ms", "Solve", stats.solve_ms);
     ImGui::Text("%-10s rms %.2e max %.2e", "Continuity", ctx->continuity_rms, ctx->continuity_max);
+
+    // Net outflow per side as % of total inflow
+    const MassBalance& mass = ctx->mass;
+    if (mass.inflow > 0.0f) {
+        ImGui::Text("%-10s imbalance %+.2e", "Mass", (mass.inflow - mass.outflow) / mass.inflow);
+        ImGui::Text("%-10s L %+4.0f%% R %+4.0f%% B %+4.0f%% T %+4.0f%%", "Net out",
+                    100.0f * mass.left / mass.inflow, 100.0f * mass.right / mass.inflow,
+                    100.0f * mass.bottom / mass.inflow, 100.0f * mass.top / mass.inflow);
+    } else {
+        ImGui::Text("%-10s closed", "Mass");
+    }
 
     ImGui::End();
 }

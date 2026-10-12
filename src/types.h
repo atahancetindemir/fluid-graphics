@@ -34,12 +34,23 @@ typedef enum {
 typedef struct {
     SolveStatus status;             // How the solve ended
     size_t iterations;              // Iterations the solve ran
+    size_t replacements;            // PCG restarts from the true residual
     float delta_p;                  // Largest pressure change in the final iteration
     float initial_residual;         // True residual of the warm start, max |Lap(p) - div * cp|
     float residual;                 // True residual of the final pressure, max |Lap(p) - div * cp|
     float rhs;                      // Largest right-hand side term, max |div * cp|
     double solve_ms;                // Wall time of the solve
 } SolveStats;
+
+// Flux through the domain boundary, per unit depth
+typedef struct {
+    float inflow;                   // Total flux entering the domain
+    float outflow;                  // Total flux leaving the domain
+    float left;                     // Net outflow through the left side
+    float right;                    // Net outflow through the right side
+    float bottom;                   // Net outflow through the bottom side
+    float top;                      // Net outflow through the top side
+} MassBalance;
 
 // Fluid Simulation Context
 struct FluidContext {
@@ -81,6 +92,7 @@ struct FluidContext {
     SolveStats stats;               // Last pressure solve
     float continuity_rms;           // RMS over fluid cells of |net face flux| / U after the last step
     float continuity_max;           // Largest |net face flux| / U over fluid cells after the last step
+    MassBalance mass;               // Boundary flux after the last step
 };
 
 // Scenario Parameters
