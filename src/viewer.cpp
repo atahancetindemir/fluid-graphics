@@ -3,22 +3,14 @@
 #include <imgui.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
-#include <limits>
 #include <omp.h>
 
 extern "C" {
     #include "core.h"
     #include "preconditioners.h"
+    #include "setup.h"
 }
-
-constexpr size_t default_grid_size = 128;
-constexpr float default_dt = 0.016f;
-constexpr float default_dx = 0.1f;
-constexpr float default_density = 1.0f;
-constexpr float default_viscosity = 0.001f;
-constexpr SolveTolerance default_tolerance = { 1e-4f, 1e-9f, 1000 };
 
 constexpr float info_overlay_alpha = 0.75f;
 constexpr ImU32 colorbar_text_color = IM_COL32(255, 255, 255, 255);
@@ -97,22 +89,6 @@ static bool option_combo(const char* label, int& index, const Option (&options)[
     return changed;
 }
 
-// Finds the value range a field should be colour mapped against.
-static void scan_range(const float* data, const size_t count, float& out_min, float& out_max) {
-    out_min = std::numeric_limits<float>::infinity();
-    out_max = -std::numeric_limits<float>::infinity();
-    for (size_t i = 0; i < count; ++i) {
-        const float value = data[i];
-        if (value < out_min) out_min = value;
-        if (value > out_max) out_max = value;
-    }
-    // A degenerate range would make the colour mapping divide by ~zero, so fall back to [0, 1].
-    if (!std::isfinite(out_min) || !std::isfinite(out_max) || out_max - out_min < 1e-6f) {
-        out_min = 0.0f;
-        out_max = 1.0f;
-    }
-}
-
 // Field and colour bar centered left of the UI column, at the largest whole number of pixels per cell
 static FieldRect layout_field(const ImVec2& display, const int width, const int height) {
     const int region_width = (int)display.x - 2 * layout_margin - layout_gap - ui_column_width;
@@ -166,17 +142,7 @@ static void draw_colorbar(const FieldRect& field, const float range_min, const f
 }
 
 Viewer::Viewer(Renderer& renderer) : renderer(renderer) {
-    ctx = fluid_create_context(
-        default_grid_size, default_grid_size,
-        default_dt, default_dx,
-        default_density, default_viscosity,
-        default_tolerance);
-
     restart(true);
-
-    velocity_magnitudes.assign((size_t)ctx->num_cells, 0.0f);
-    u_centered.assign((size_t)ctx->num_cells, 0.0f);
-    v_centered.assign((size_t)ctx->num_cells, 0.0f);
 }
 
 Viewer::~Viewer() {
@@ -184,10 +150,19 @@ Viewer::~Viewer() {
 }
 
 void Viewer::restart(const bool load_defaults) {
-    if (load_defaults)
-        scenario = load_scenario(controls.scenario_type, ctx, &params);
-    else
-        scenario_update_derived(controls.scenario_type, ctx, &params);
+    if (load_defaults) {
+        setup = scenario_setup(controls.scenario_type);
+        fluid_destroy_context(ctx);
+        ctx = fluid_create_context(setup->nx, setup->ny, setup->dt, setup->dx,
+                                   setup->density, setup->viscosity, setup->tol);
+        params = setup->params;
+        scenario = load_scenario(controls.scenario_type);
+
+        velocity_magnitudes.assign((size_t)ctx->num_cells, 0.0f);
+        u_centered.assign((size_t)ctx->num_cells, 0.0f);
+        v_centered.assign((size_t)ctx->num_cells, 0.0f);
+    }
+    scenario_update_derived(controls.scenario_type, ctx, &params);
 
     fluid_reset_context(ctx);
     fluid_setup_physics(ctx, solver_options[controls.solver_index].solve,
@@ -325,7 +300,7 @@ void Viewer::draw_controls() {
 
     if (ImGui::CollapsingHeader("Scenario##header", ImGuiTreeNodeFlags_DefaultOpen)) {
         // The scenario is held as a domain type rather than a menu index, because the
-        // solver API and the obstacle panel below both read it.
+        // setup table and the solver API read it.
         int scenario_index = 0;
         for (int i = 0; i < IM_ARRAYSIZE(scenario_options); ++i) {
             if (scenario_options[i].type == controls.scenario_type)
@@ -366,20 +341,13 @@ void Viewer::draw_controls() {
         ImGui::SliderFloat("dt", &ctx->dt, 0.001f, 0.05f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
     }
 
-    if (controls.scenario_type == KARMAN_VORTEX &&
-        ImGui::CollapsingHeader("Karman Obstacle", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::SliderFloat("Obstacle X", &params.obstacle_x, 1.0f, (float)ctx->x - 2.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SliderFloat("Obstacle Y", &params.obstacle_y, 1.0f, (float)ctx->y - 2.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-        int radius = (int)params.obstacle_radius;
-        if (ImGui::SliderInt("Obstacle Radius", &radius, 2, (int)(ctx->y / 4), "%d", ImGuiSliderFlags_AlwaysClamp))
-            params.obstacle_radius = (size_t)radius;
-        if (ImGui::Button("Rebuild Solids"))
-            controls.request_restart = true;
-    }
-
     ImGui::Separator();
-    if (ImGui::Button("Reset"))
+    // Restart keeps the edited parameters, Load Defaults takes them from the setup table
+    if (ImGui::Button("Restart"))
         controls.request_restart = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Load Defaults"))
+        controls.request_reload = true;
 
     ImGui::PopItemWidth();
     ImGui::End();
@@ -404,16 +372,20 @@ void Viewer::present() {
             quantity = "Smoke";
             renderer.update_field(ctx->smoke, width, height, range_min, range_max);
             break;
-        case ViewMode::PRESSURE:
+        case ViewMode::PRESSURE: {
             quantity = "p [Pa]";
-            scan_range(ctx->p, ctx->num_cells, range_min, range_max);
+            // The setup's range is in units of the dynamic pressure scale, density * U^2
+            const float pressure_scale = ctx->dens * params.inlet_velocity * params.inlet_velocity;
+            range_min = setup->pressure_min * pressure_scale;
+            range_max = setup->pressure_max * pressure_scale;
             renderer.update_field(ctx->p, width, height, range_min, range_max);
             break;
+        }
         case ViewMode::VELOCITY_MAGNITUDE:
         case ViewMode::FIELD_AND_VECTORS:
             quantity = "|u| [m/s]";
+            range_max = setup->velocity_max * params.inlet_velocity;
             fluid_velocity_magnitude(ctx, velocity_magnitudes.data());
-            scan_range(velocity_magnitudes.data(), ctx->num_cells, range_min, range_max);
             renderer.update_field(velocity_magnitudes.data(), width, height, range_min, range_max);
             break;
         case ViewMode::VECTORS:

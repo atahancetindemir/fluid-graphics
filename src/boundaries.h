@@ -5,7 +5,7 @@
 
 #include "types.h"
 
-// Applies no-slip condition (zero velocity) on all solid boundaries
+// Applies no-slip condition (zero velocity) on all solid boundaries; outer wall ghosts mirror the fluid side
 void bound_apply_no_slip(FluidContext* ctx);
 
 // Symmetry (free-slip) condition on the top and bottom boundaries

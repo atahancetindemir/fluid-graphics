@@ -6,7 +6,7 @@
 typedef enum {
     LID_DRIVEN,     // Classic lid-driven cavity flow
     KARMAN_VORTEX,  // Flow around a cylinder creating a von Karman vortex street
-    AIRFOIL,        // Flow around a NACA 2412 airfoil at zero angle of attack
+    AIRFOIL,        // Flow around a NACA 2412 airfoil at an angle of attack
     URBAN_CITY      // Flow in an urban city environment
 } ScenarioType;
 
@@ -17,14 +17,8 @@ typedef struct {
     void (*apply_boundaries)(FluidContext* ctx, ScenarioParams p);
 } Scenario;
 
-/**
- * @brief Loads a scenario based on the specified type and initializes the provided parameters.
- * @param type The type of scenario to load (e.g., LID_DRIVEN, KARMAN_VORTEX, AIRFOIL, URBAN_CITY).
- * @param ctx Pointer to the fluid context, which may be used to set scenario-specific parameters
- * @param p Pointer to a ScenarioParams struct that will be populated with scenario-specific parameters such as inlet velocity, length scale, and obstacle geometry.
- * @return A Scenario struct containing function pointers for initialization, source application, and boundary condition application
- */
-Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p);
+// Returns the init, source and boundary functions of a scenario; its default values live in setup.c.
+Scenario load_scenario(ScenarioType type);
 
 // Recomputes the parameters that are derived from other scenario parameters, currently the
 // characteristic length scale. Call this after editing a parameter the length scale depends on

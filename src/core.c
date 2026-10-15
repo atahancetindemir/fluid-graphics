@@ -684,7 +684,9 @@ const char* fluid_solve_status_name(SolveStatus status) {
 }
 
 float fluid_optimal_omega(const FluidContext* ctx) {
-    float omega = 2.0f / (1.0f + sinf(PI / (float)ctx->x));
+    // Jacobi spectral radius of the 5-point Laplacian on an x by y grid
+    float rho = 0.5f * (cosf(PI / (float)ctx->x) + cosf(PI / (float)ctx->y));
+    float omega = 2.0f / (1.0f + sqrtf(1.0f - rho * rho));
 
     if (omega >= 1.99f) {
         return 1.99f;   // Clamp for upperbound

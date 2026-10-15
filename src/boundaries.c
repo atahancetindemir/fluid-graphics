@@ -17,6 +17,20 @@ void bound_apply_no_slip(FluidContext* ctx) {
             }
         }
     }
+
+    // Ghosts in the outer wall rows and columns mirror the fluid side, so the wall face is at rest
+    for (size_t i = 1; i < ctx->x; i++) {
+        if (u_face_solid(ctx, i, 0) && u_face_fluid(ctx, i, 1))
+            ctx->u[IX_U(ctx, i, 0)] = -ctx->u[IX_U(ctx, i, 1)];
+        if (u_face_solid(ctx, i, ctx->y - 1) && u_face_fluid(ctx, i, ctx->y - 2))
+            ctx->u[IX_U(ctx, i, ctx->y - 1)] = -ctx->u[IX_U(ctx, i, ctx->y - 2)];
+    }
+    for (size_t j = 1; j < ctx->y; j++) {
+        if (v_face_solid(ctx, 0, j) && v_face_fluid(ctx, 1, j))
+            ctx->v[IX_V(ctx, 0, j)] = -ctx->v[IX_V(ctx, 1, j)];
+        if (v_face_solid(ctx, ctx->x - 1, j) && v_face_fluid(ctx, ctx->x - 2, j))
+            ctx->v[IX_V(ctx, ctx->x - 1, j)] = -ctx->v[IX_V(ctx, ctx->x - 2, j)];
+    }
 }
 
 void bound_apply_free_slip_horizontal(FluidContext* ctx) {
@@ -43,9 +57,8 @@ void bound_apply_opening_horizontal(FluidContext* ctx) {
 
 void bound_apply_inlet_left(FluidContext* ctx, float velocity, float smoke_density, size_t smoke_start_j, size_t smoke_end_j) {
     for (size_t j = 1; j < ctx->y - 1; j++) {
-        // Apply wind velocity
+        // Apply wind velocity; the tangential ghost is mirrored by bound_apply_no_slip
         ctx->u[IX_U(ctx, 1, j)] = velocity;
-        ctx->v[IX_V(ctx, 0, j)] = 0.0f;
         
         // Inject smoke only within the specified band
         if (j >= smoke_start_j && j <= smoke_end_j) {

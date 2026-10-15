@@ -10,11 +10,11 @@
 void scenario_update_derived(ScenarioType type, const FluidContext* ctx, ScenarioParams* p) {
     switch (type) {
         case KARMAN_VORTEX:
-            p->length_scale = 2.0f * (float)p->obstacle_radius * ctx->dx;
+            p->length_scale = 2.0f * p->obstacle_radius * ctx->dx;
             break;
 
         case AIRFOIL:
-            p->length_scale = p->chord_length;
+            p->length_scale = p->chord_length * ctx->dx;
             break;
 
         case URBAN_CITY:
@@ -23,47 +23,35 @@ void scenario_update_derived(ScenarioType type, const FluidContext* ctx, Scenari
 
         case LID_DRIVEN:
         default:
-            p->length_scale = (float)ctx->x * ctx->dx;
+            // The cavity is the fluid cells between the wall columns
+            p->length_scale = (float)(ctx->x - 2) * ctx->dx;
             break;
     }
 }
 
-Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) {
+Scenario load_scenario(ScenarioType type) {
     Scenario s;
 
     switch (type) {
         case LID_DRIVEN:
-        p->inlet_velocity = 1.0f;
-
         s.init = init_lid_driven;
         s.apply_sources = apply_sources_lid_driven;
         s.apply_boundaries = apply_boundaries_lid_driven;
         break;
 
         case KARMAN_VORTEX:
-            p->inlet_velocity = 1.0f;
-            p->obstacle_x = ctx->x / 4.0f;
-            p->obstacle_y = ctx->y / 2.0f;
-            p->obstacle_radius = 10.0f;
-
             s.init = init_karman_vortex;
             s.apply_sources = apply_sources_karman_vortex;
             s.apply_boundaries = apply_boundaries_karman_vortex;
             break;
 
         case AIRFOIL:
-            p->inlet_velocity = 2.0f;
-            p->chord_length = ctx->x * ctx->dx * 0.4f;
-            p->angle_of_attack = 0.0f;
-
             s.init = init_airfoil;
             s.apply_sources = apply_sources_airfoil;
             s.apply_boundaries = apply_boundaries_airfoil;
             break;
 
         case URBAN_CITY:
-            p->inlet_velocity = 1.5f;
-
             s.init = init_urban_city;
             s.apply_sources = apply_sources_urban_city;
             s.apply_boundaries = apply_boundaries_urban_city;
@@ -75,9 +63,6 @@ Scenario load_scenario(ScenarioType type, FluidContext* ctx, ScenarioParams* p) 
             s.apply_sources = apply_sources_lid_driven;
             s.apply_boundaries = apply_boundaries_lid_driven;
     }
-
-    // Derived from the defaults just written, and re-runnable after the user edits them.
-    scenario_update_derived(type, ctx, p);
 
     return s;
 }
@@ -113,12 +98,10 @@ void apply_boundaries_lid_driven(FluidContext* ctx, ScenarioParams p) {
     // Apply standard no-slip to all walls
     bound_apply_no_slip(ctx);
 
-    // Unique condition for Lid-Driven: Moving top wall
-    for (size_t i = 0; i < ctx->x; i++) {
-        if (ctx->solid[IX(ctx, i, ctx->y - 1)]) {
-            ctx->u[IX_U(ctx, i, ctx->y - 1)] = p.inlet_velocity;
-            ctx->u[IX_U(ctx, i + 1, ctx->y - 1)] = p.inlet_velocity;
-        }
+    // Moving top wall: the ghost row mirrors about the lid velocity, so the lid face moves at U
+    for (size_t i = 1; i < ctx->x; i++) {
+        if (u_face_fluid(ctx, i, ctx->y - 2))
+            ctx->u[IX_U(ctx, i, ctx->y - 1)] = 2.0f * p.inlet_velocity - ctx->u[IX_U(ctx, i, ctx->y - 2)];
     }
 }
 
@@ -176,10 +159,14 @@ void init_airfoil(FluidContext* ctx, ScenarioParams p) {
     // Inlet column; the top and bottom stay open
     bound_build_outer_walls(ctx, 0, 0, 1, 0);
 
-    // Airfoil dimensions and position
-    float chord = p.chord_length;
-    float start_x = ctx->x * ctx->dx * 0.2f; 
-    float center_y = ctx->y * ctx->dx * 0.5f;
+    // Airfoil dimensions and leading edge position
+    float chord = p.chord_length * ctx->dx;
+    float start_x = p.obstacle_x * ctx->dx;
+    float center_y = p.obstacle_y * ctx->dx;
+
+    // Points are rotated about the leading edge by the angle of attack
+    float cos_a = cosf(p.angle_of_attack * PI / 180.0f);
+    float sin_a = sinf(p.angle_of_attack * PI / 180.0f);
 
     // NACA 2412 Parameters
     float m_camber = 0.02f; // Max camber (2%)
@@ -188,8 +175,10 @@ void init_airfoil(FluidContext* ctx, ScenarioParams p) {
 
     for (size_t i = 1; i < ctx->x - 1; i++) {
         for (size_t j = 1; j < ctx->y - 1; j++) {
-            float px = i * ctx->dx - start_x;
-            float py = j * ctx->dx - center_y;
+            float wx = i * ctx->dx - start_x;
+            float wy = j * ctx->dx - center_y;
+            float px = cos_a * wx - sin_a * wy;
+            float py = sin_a * wx + cos_a * wy;
             float x_c = px / chord;
 
             if (x_c >= 0.0f && x_c <= 1.0f) {

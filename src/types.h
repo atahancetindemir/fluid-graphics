@@ -100,13 +100,29 @@ typedef struct {
     float inlet_velocity;           // Characteristic velocity for the scenario
     float length_scale;             // Characteristic length scale for the scenario
 
-    float obstacle_x;               // X-coordinate of the center of the obstacle
-    float obstacle_y;               // Y-coordinate of the center of the obstacle
-    size_t obstacle_radius;         // Radius of the obstacle
+    float obstacle_x;               // Obstacle x in cells: cylinder centre, airfoil leading edge
+    float obstacle_y;               // Obstacle y in cells: cylinder centre, airfoil leading edge
+    float obstacle_radius;          // Cylinder radius in cells
 
-    float chord_length;             // Length of the airfoil's chord
-    float angle_of_attack;          // Angle of attack for the airfoil
+    float chord_length;             // Airfoil chord in cells
+    float angle_of_attack;          // Airfoil angle of attack in degrees, positive raises the nose
 
 } ScenarioParams;
+
+// Default setup of a scenario: grid, physics, pressure tolerance, parameters and colour ranges
+typedef struct {
+    size_t nx;                      // Grid width in cells, walls included
+    size_t ny;                      // Grid height in cells, walls included
+    float dx;                       // Cell size
+    float dt;                       // Time step
+    float density;                  // Fluid density
+    float viscosity;                // Fluid viscosity
+    SolveTolerance tol;             // Pressure solve stopping rule
+    ScenarioParams params;          // Inlet velocity and geometry; the length scale is derived
+
+    float velocity_max;             // Top of the velocity colour range, in units of the inlet velocity
+    float pressure_min;             // Bottom of the pressure colour range, in units of density * U^2
+    float pressure_max;             // Top of the pressure colour range, in units of density * U^2
+} ScenarioSetup;
 
 #endif // TYPES_H

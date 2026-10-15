@@ -53,6 +53,7 @@ add_executable(fluid-graphics
     src/core.c
     src/boundaries.c
     src/scenarios.c
+    src/setup.c
     src/preconditioners.c
     ${IMGUI_EXECUTABLES}
 )

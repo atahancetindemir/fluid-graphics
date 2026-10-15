@@ -64,18 +64,19 @@ private:
     // Uploads the field the current view mode needs, then draws.
     void present();
 
-    // Clears the simulation and starts the scenario over. Loads the scenario
-    // defaults when load_defaults is set, otherwise keeps the edited parameters.
+    // Clears the simulation and starts the scenario over. Loads the scenario's default setup,
+    // recreating the context for its grid, when load_defaults is set; otherwise keeps the edited parameters.
     void restart(bool load_defaults);
 
     Renderer& renderer;
 
     FluidContext* ctx = nullptr;
+    const ScenarioSetup* setup = nullptr;
     ScenarioParams params{};
     Scenario scenario{};
     ViewerControls controls{};
 
-    // Scratch buffers for the views that need derived fields, sized once with the grid.
+    // Scratch buffers for the views that need derived fields, sized with the grid.
     std::vector<float> velocity_magnitudes;
     std::vector<float> u_centered;
     std::vector<float> v_centered;

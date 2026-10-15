@@ -67,6 +67,26 @@
         } \
     } while(0)
 
+// True when both cells beside the u face (i, j) are solid.
+static inline int u_face_solid(const FluidContext* ctx, size_t i, size_t j) {
+    return ctx->solid[IX(ctx, i - 1, j)] && ctx->solid[IX(ctx, i, j)];
+}
+
+// True when both cells beside the u face (i, j) are fluid.
+static inline int u_face_fluid(const FluidContext* ctx, size_t i, size_t j) {
+    return !ctx->solid[IX(ctx, i - 1, j)] && !ctx->solid[IX(ctx, i, j)];
+}
+
+// True when both cells beside the v face (i, j) are solid.
+static inline int v_face_solid(const FluidContext* ctx, size_t i, size_t j) {
+    return ctx->solid[IX(ctx, i, j - 1)] && ctx->solid[IX(ctx, i, j)];
+}
+
+// True when both cells beside the v face (i, j) are fluid.
+static inline int v_face_fluid(const FluidContext* ctx, size_t i, size_t j) {
+    return !ctx->solid[IX(ctx, i, j - 1)] && !ctx->solid[IX(ctx, i, j)];
+}
+
 // Fetch neighbors with Neumann BC handling for cell-centered scalar fields.
 static inline float apply_scalar_laplacian(const FluidContext* ctx, const float* src, size_t i, size_t j) {
     float center = src[IX(ctx, i, j)];
