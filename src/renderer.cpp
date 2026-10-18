@@ -16,7 +16,6 @@
 
 constexpr float arrowhead_ratio = 0.3f;
 constexpr float arrowhead_half_spread = 0.5f;
-constexpr float min_arrow_length = 1e-6f;
 
 [[nodiscard]] static std::string read_file(const char* path) {
     const std::ifstream file_stream(path);
@@ -83,6 +82,7 @@ Renderer::~Renderer() {
     shutdown_imgui();
 
     glDeleteTextures(1, &field_texture);
+    glDeleteTextures(1, &solid_texture);
     glDeleteVertexArrays(1, &quad_vao);
     glDeleteBuffers(1, &quad_vbo);
     glDeleteBuffers(1, &quad_ibo);
@@ -198,9 +198,30 @@ void Renderer::close() const {
     glfwSetWindowShouldClose(glfw_window, GLFW_TRUE);
 }
 
+// Linearly filtered texture for i-major grid data, one texture row per i
+static unsigned int create_grid_texture(const int width, const int height, const GLenum internal_format, const GLenum type) {
+    unsigned int texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, internal_format, height, width, 0, GL_RED, type, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return texture;
+}
+
 void Renderer::update_field(const float* data, const int width, const int height, const float range_min, const float range_max) {
-    if (field_texture == 0 || width != field_width || height != field_height)
-        create_field_texture(width, height);
+    if (field_texture == 0 || width != field_width || height != field_height) {
+        glDeleteTextures(1, &field_texture);
+        field_texture = create_grid_texture(width, height, GL_R16F, GL_FLOAT);
+        field_width = width;
+        field_height = height;
+    }
 
     this->range_min = range_min;
     this->range_max = range_max;
@@ -211,35 +232,31 @@ void Renderer::update_field(const float* data, const int width, const int height
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void Renderer::create_field_texture(const int width, const int height) {
-    if (field_texture != 0)
-        glDeleteTextures(1, &field_texture);
+void Renderer::update_solids(const unsigned char* solid, const int width, const int height) {
+    if (solid_texture == 0 || width != solid_width || height != solid_height) {
+        glDeleteTextures(1, &solid_texture);
+        solid_texture = create_grid_texture(width, height, GL_R8, GL_UNSIGNED_BYTE);
+        solid_width = width;
+        solid_height = height;
+    }
 
-    field_width = width;
-    field_height = height;
-
-    glGenTextures(1, &field_texture);
-    glBindTexture(GL_TEXTURE_2D, field_texture);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    // i-major data: one texture row per i, so the texture is height x width
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, height, width, 0, GL_RED, GL_FLOAT, nullptr);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glBindTexture(GL_TEXTURE_2D, solid_texture);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, height, width, GL_RED, GL_UNSIGNED_BYTE, solid);
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void Renderer::update_arrows(const float* u_centered, const float* v_centered, const int width, const int height, int stride, const float scale) {
+void Renderer::update_arrows(const float* u_centered, const float* v_centered, const int width, const int height, int stride,
+                             const float reference_speed, const float reference_length) {
     if (stride < 1) stride = 1;
+    arrow_vert_count = 0;
+    if (reference_speed <= 0.0f)
+        return;
 
     std::vector<float> vertices;
     vertices.reserve(((size_t)(width / stride) * (height / stride)) * 12);
 
     // Arrows are built in cell units and mapped to NDC per axis
-    const float cell_scale = 0.5f * scale * (float)std::max(width, height);
     const auto push_vertex = [&](const float x, const float y) {
         vertices.push_back(2.0f * x / (float)width - 1.0f);
         vertices.push_back(2.0f * y / (float)height - 1.0f);
@@ -249,48 +266,38 @@ void Renderer::update_arrows(const float* u_centered, const float* v_centered, c
         for (int j = stride / 2; j < height; j += stride) {
             const float u_center = u_centered[(size_t)i * (size_t)height + j];
             const float v_center = v_centered[(size_t)i * (size_t)height + j];
+            const float speed = std::sqrt(u_center * u_center + v_center * v_center);
+            if (speed <= 0.0f)
+                continue;
 
             // After the UV swap in field.frag, screen-X = sim-i and screen-Y = sim-j.
             const float base_x = (float)i + 0.5f;
             const float base_y = (float)j + 0.5f;
 
-            const float delta_x = u_center * cell_scale;
-            const float delta_y = v_center * cell_scale;
-            const float tip_x = base_x + delta_x;
-            const float tip_y = base_y + delta_y;
+            const float len = reference_length * std::sqrt(speed / reference_speed);
+            const float dir_x = u_center / speed;
+            const float dir_y = v_center / speed;
+            const float tip_x = base_x + dir_x * len;
+            const float tip_y = base_y + dir_y * len;
 
             // Shaft
             push_vertex(base_x, base_y);
             push_vertex(tip_x, tip_y);
 
             // Arrowhead — two wing line segments
-            const float len = std::sqrt(delta_x * delta_x + delta_y * delta_y);
-            if (len > min_arrow_length) {
-                const float inv_len = 1.0f / len;
-                const float dir_x = delta_x * inv_len;
-                const float dir_y = delta_y * inv_len;
-                const float head_len = arrowhead_ratio * len;
-                const float perp_x = -dir_y;
-                const float perp_y = dir_x;
+            const float head_len = arrowhead_ratio * len;
+            const float perp_x = -dir_y;
+            const float perp_y = dir_x;
 
-                const float arrowhead_base_x = tip_x - dir_x * head_len;
-                const float arrowhead_base_y = tip_y - dir_y * head_len;
-                const float wing_offset_x = perp_x * head_len * arrowhead_half_spread;
-                const float wing_offset_y = perp_y * head_len * arrowhead_half_spread;
+            const float arrowhead_base_x = tip_x - dir_x * head_len;
+            const float arrowhead_base_y = tip_y - dir_y * head_len;
+            const float wing_offset_x = perp_x * head_len * arrowhead_half_spread;
+            const float wing_offset_y = perp_y * head_len * arrowhead_half_spread;
 
-                const float wing_a_x = arrowhead_base_x + wing_offset_x;
-                const float wing_a_y = arrowhead_base_y + wing_offset_y;
-                const float wing_b_x = arrowhead_base_x - wing_offset_x;
-                const float wing_b_y = arrowhead_base_y - wing_offset_y;
-
-                push_vertex(tip_x, tip_y);
-                push_vertex(wing_a_x, wing_a_y);
-                push_vertex(tip_x, tip_y);
-                push_vertex(wing_b_x, wing_b_y);
-            } else {
-                for (int k = 0; k < 4; ++k)
-                    push_vertex(tip_x, tip_y);
-            }
+            push_vertex(tip_x, tip_y);
+            push_vertex(arrowhead_base_x + wing_offset_x, arrowhead_base_y + wing_offset_y);
+            push_vertex(tip_x, tip_y);
+            push_vertex(arrowhead_base_x - wing_offset_x, arrowhead_base_y - wing_offset_y);
         }
     }
 
@@ -331,11 +338,17 @@ void Renderer::draw(const ViewMode mode, const FieldRect& field) const {
     const bool draw_arrows = (mode == ViewMode::VECTORS ||
                               mode == ViewMode::FIELD_AND_VECTORS);
 
-    if (draw_field && field_texture != 0) {
+    // Vectors Only draws black fluid with the solid outlines
+    if ((draw_field && field_texture != 0) || (draw_arrows && solid_texture != 0)) {
         glUseProgram(field_shader);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, field_texture);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, solid_texture);
+        glActiveTexture(GL_TEXTURE0);
         glUniform1i(glGetUniformLocation(field_shader, "u_field"), 0);
+        glUniform1i(glGetUniformLocation(field_shader, "u_solid"), 1);
+        glUniform1i(glGetUniformLocation(field_shader, "u_show_field"), draw_field ? 1 : 0);
         glUniform1f(glGetUniformLocation(field_shader, "u_range_min"), range_min);
         glUniform1f(glGetUniformLocation(field_shader, "u_range_max"), range_max);
 

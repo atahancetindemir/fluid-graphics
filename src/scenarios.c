@@ -235,14 +235,14 @@ void apply_boundaries_airfoil(FluidContext* ctx, ScenarioParams p) {
 void init_urban_city(FluidContext* ctx, ScenarioParams p) {
     UNUSED(p);
 
-    // Clear domain and set background ambient air
+    // Clear domain and smoke
     for (size_t i = 0; i < ctx->x * ctx->y; i++) {
         ctx->solid[i] = 0;
-        ctx->smoke[i] = 0.1f;
+        ctx->smoke[i] = 0.0f;
     }
 
-    // Inlet column; the top and bottom stay open
-    bound_build_outer_walls(ctx, 0, 0, 1, 0);
+    // Inlet column and the top and bottom symmetry rows
+    bound_build_outer_walls(ctx, 1, 1, 1, 0);
 
     // Zone 1: Frontal low-rise buildings
     BUILD_BLOCK(0.10f, 0.15f, 0.05f, 0.10f);
@@ -279,14 +279,16 @@ void init_urban_city(FluidContext* ctx, ScenarioParams p) {
 }
 
 void apply_sources_urban_city(FluidContext* ctx, ScenarioParams p) {
-    UNUSED(ctx);
     UNUSED(p);
+
+    // Smoke streaks behind the inlet
+    for (size_t j = 1; j < ctx->y - 1; j++)
+        ctx->smoke[IX(ctx, 2, j)] = (j % 16 < 4) ? 1.0f : 0.0f;
 }
 
 void apply_boundaries_urban_city(FluidContext* ctx, ScenarioParams p) {
     bound_apply_no_slip(ctx);
-    // Full wall inlet with continuous smoke injection
-    bound_apply_inlet_left(ctx, p.inlet_velocity, 1.0f, 1, ctx->y - 2);
+    bound_apply_inlet_left(ctx, p.inlet_velocity, 0.0f, 0, 0); // Wind only, smoke is handled in apply_sources
     bound_apply_outlet_right(ctx);
-    bound_apply_opening_horizontal(ctx);
+    bound_apply_free_slip_horizontal(ctx);
 }

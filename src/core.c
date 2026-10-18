@@ -216,8 +216,15 @@ void advect_scalar(FluidContext* ctx, float* dest, const float* src, float* u, f
             float sy1 = src_y - (float)j0;
             float sy0 = 1.0f - sy1;
 
+            // Solid samples take the cell's own value
+            const float own = src[IX(ctx, i, j)];
+            const float s00 = ctx->solid[IX(ctx, i0, j0)] ? own : src[IX(ctx, i0, j0)];
+            const float s01 = ctx->solid[IX(ctx, i0, j1)] ? own : src[IX(ctx, i0, j1)];
+            const float s10 = ctx->solid[IX(ctx, i1, j0)] ? own : src[IX(ctx, i1, j0)];
+            const float s11 = ctx->solid[IX(ctx, i1, j1)] ? own : src[IX(ctx, i1, j1)];
+
             // Weighted average of 4 cells
-            dest[IX(ctx, i, j)] = bilinear_interp(sx0, sx1, sy0, sy1, src[IX(ctx, i0, j0)], src[IX(ctx, i0, j1)], src[IX(ctx, i1, j0)], src[IX(ctx, i1, j1)]);
+            dest[IX(ctx, i, j)] = bilinear_interp(sx0, sx1, sy0, sy1, s00, s01, s10, s11);
         }
     }
 }
@@ -866,6 +873,7 @@ void fluid_step(FluidContext* ctx, ScenarioParams p, Scenario s) {
     s.apply_boundaries(ctx, p);
 
     // Scalar Advection
+    memcpy(ctx->smoke_prev, ctx->smoke, ctx->num_cells * sizeof(float));
     advect_scalar(ctx, ctx->smoke_prev, ctx->smoke, ctx->u, ctx->v);
     
     SWAP_PTR(ctx->smoke, ctx->smoke_prev);

@@ -120,6 +120,9 @@ typedef struct {
     SolveTolerance tol;             // Pressure solve stopping rule
     ScenarioParams params;          // Inlet velocity and geometry; the length scale is derived
 
+    int arrow_spacing;              // Default arrow spacing in screen pixels
+    float arrow_scale;              // Default arrow length in spacings at the top of the velocity range
+
     float velocity_max;             // Top of the velocity colour range, in units of the inlet velocity
     float pressure_min;             // Bottom of the pressure colour range, in units of density * U^2
     float pressure_max;             // Top of the pressure colour range, in units of density * U^2

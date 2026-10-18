@@ -19,8 +19,8 @@ struct ViewerControls {
     ViewMode mode = ViewMode::VELOCITY_MAGNITUDE;
     ScenarioType scenario_type = KARMAN_VORTEX;
     int substeps_per_frame = 1;
-    int arrow_stride = 8;
-    float arrow_scale = 0.04f;
+    int arrow_spacing = 24;
+    float arrow_scale = 1.0f;
     bool auto_omega = true;
 
     bool request_restart = false;

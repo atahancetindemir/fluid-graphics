@@ -158,6 +158,13 @@ void Viewer::restart(const bool load_defaults) {
         params = setup->params;
         scenario = load_scenario(controls.scenario_type);
 
+        // Visualization defaults, with the scenario's arrows
+        const ViewerControls defaults{};
+        controls.mode = defaults.mode;
+        controls.substeps_per_frame = defaults.substeps_per_frame;
+        controls.arrow_spacing = setup->arrow_spacing;
+        controls.arrow_scale = setup->arrow_scale;
+
         velocity_magnitudes.assign((size_t)ctx->num_cells, 0.0f);
         u_centered.assign((size_t)ctx->num_cells, 0.0f);
         v_centered.assign((size_t)ctx->num_cells, 0.0f);
@@ -168,6 +175,7 @@ void Viewer::restart(const bool load_defaults) {
     fluid_setup_physics(ctx, solver_options[controls.solver_index].solve,
                         precond_options[controls.preconditioner_index].type);
     scenario.init(ctx, params);
+    renderer.update_solids(ctx->solid, (int)ctx->x, (int)ctx->y);
 }
 
 void Viewer::step_frame() {
@@ -291,8 +299,8 @@ void Viewer::draw_controls() {
         const bool vectors_shown = (controls.mode == ViewMode::VECTORS ||
                                     controls.mode == ViewMode::FIELD_AND_VECTORS);
         ImGui::BeginDisabled(!vectors_shown);
-        ImGui::SliderInt("Arrow Stride", &controls.arrow_stride, 2, 32, "%d", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SliderFloat("Arrow Scale", &controls.arrow_scale, 0.001f, 0.2f, "%.4f",
+        ImGui::SliderInt("Arrow Spacing", &controls.arrow_spacing, 8, 64, "%d px", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderFloat("Arrow Scale", &controls.arrow_scale, 0.25f, 4.0f, "%.2f",
                            ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
         ImGui::EndDisabled();
         ImGui::SliderInt("Substeps/Frame", &controls.substeps_per_frame, 1, 50, "%d", ImGuiSliderFlags_AlwaysClamp);
@@ -396,8 +404,19 @@ void Viewer::present() {
 
     if (controls.mode == ViewMode::VECTORS || controls.mode == ViewMode::FIELD_AND_VECTORS) {
         fluid_velocity_centered(ctx, u_centered.data(), v_centered.data());
-        renderer.update_arrows(u_centered.data(), v_centered.data(), width, height,
-                               controls.arrow_stride, controls.arrow_scale);
+        // Wall cells hold mirrored ghost velocities
+        for (size_t k = 0; k < ctx->num_cells; ++k) {
+            if (ctx->solid[k]) {
+                u_centered[k] = 0.0f;
+                v_centered[k] = 0.0f;
+            }
+        }
+
+        const int cell_pixels = std::max(1, field.width / width);
+        const int stride = std::max(1, (controls.arrow_spacing + cell_pixels / 2) / cell_pixels);
+        const float reference_speed = setup->velocity_max * params.inlet_velocity;
+        renderer.update_arrows(u_centered.data(), v_centered.data(), width, height, stride,
+                               reference_speed, controls.arrow_scale * (float)stride);
     }
 
     renderer.draw(controls.mode, field);

@@ -53,7 +53,6 @@ void apply_boundaries_airfoil(FluidContext* ctx, ScenarioParams p);
 
 void init_urban_city(FluidContext* ctx, ScenarioParams p);
 
-// Unused
 void apply_sources_urban_city(FluidContext* ctx, ScenarioParams p);
 
 void apply_boundaries_urban_city(FluidContext* ctx, ScenarioParams p);

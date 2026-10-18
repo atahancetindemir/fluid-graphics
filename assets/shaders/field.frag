@@ -4,8 +4,13 @@ in vec2 v_tex_coord;
 out vec4 frag_color;
 
 uniform sampler2D u_field;
+uniform sampler2D u_solid;
+uniform bool u_show_field;
 uniform float u_range_min;
 uniform float u_range_max;
+
+const vec3 solid_color = vec3(0.0);
+const vec3 outline_color = vec3(0.6);
 
 // Turbo colormap polynomial approximation (Google, 2019).
 // turbo_color() in src/viewer.cpp draws the colour bar with a copy of this polynomial.
@@ -34,5 +39,14 @@ void main()
     float range = u_range_max - u_range_min;
     float normalized = range > min_range ? (raw - u_range_min) / range : 0.0;
 
-    frag_color = vec4(turbo(normalized), 1.0);
+    vec3 color = u_show_field ? turbo(normalized) : vec3(0.0);
+
+    // The mask is 0 or 1/255 per cell
+    float solid = texture(u_solid, v_tex_coord.yx).r * 255.0;
+    color = mix(color, solid_color, smoothstep(0.45, 0.55, solid));
+
+    // Outline about 1.5 pixels wide at any zoom
+    float per_pixel = max(fwidth(solid), 1e-4);
+    float outline = 1.0 - smoothstep(0.5 * per_pixel, 1.0 * per_pixel, abs(solid - 0.5));
+    frag_color = vec4(mix(color, outline_color, outline), 1.0);
 }
